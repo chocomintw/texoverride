@@ -15,7 +15,7 @@ cannot deliver ped textures — they drain before the connect handshake, and the
 non-overlay. This works at the streaming layer instead.
 
 Repo: github.com/blancodagoat/texoverride (owner blancodagoat). Single-file plugin: `dllmain.cpp`.
-Latest tag at time of writing: v0.8.8. Only loads on `sv_pureLevel 0` servers (level 1 needs a Cfx
+Latest tag at time of writing: v0.8.7 (0.8.8 is in the changelog, not tagged yet). Only loads on `sv_pureLevel 0` servers (level 1 needs a Cfx
 signature a self-built ASI lacks; level 2 disables the ASI loader).
 
 ## The four override mechanisms (all in dllmain.cpp)
@@ -30,12 +30,17 @@ signature a self-built ASI lacks; level 2 disables the ASI loader).
    collection). No name whitelist: a scan of every overlay rpf found ~100 unrelated naming
    families plus arbitrary server packs, so the gate is type + exactness (`isAllowedKey`).
 
-3. **Weapon drawables** — `tex_overrides/<name>.ydr` at the ROOT, no folder. The file name must
+3. **Weapon drawables** (0.8.8, PR #11 by chocomintw) — `tex_overrides/<name>.ydr` at the ROOT, no folder. The file name must
    start with `w_`. Every GTA V weapon — base game and DLC — uses this prefix (w_pi_, w_ar_,
    w_sg_, w_sr_, w_sm_, w_mg_, w_ex_, w_me_, w_lc_, etc.), and server-added weapons follow the
    same convention. The prefix is what separates weapon drawables from vehicle parts, prop
    drawables, building pieces and any other `.ydr` in the game. Texture dicts (`.ytd`) for weapons
    go through mechanism 2 and already worked before 0.8.8.
+   **UNVERIFIED: whether a VANILLA weapon slot can be claimed.** The PR's README text asserted it
+   could, citing the animations rule, which actually says the opposite (a file that shipped with
+   GTA never passes through `registerRawStreamingFile`, which is why the plugin CALLS it itself for
+   base clothing). Server-streamed weapons are fine by the same argument as `.ycd`. The README now
+   states both and asks for a log; replace that wording the moment one shows up either way.
 
 4. **Tattoo placement** — `tex_overrides/<name>.xml` at the root (an edited copy of a pack's
    `overlays.xml`). Moves/resizes/rotates tattoos by patching the parsed values inside the game's
@@ -53,6 +58,24 @@ signature a self-built ASI lacks; level 2 disables the ASI loader).
 - Root files: `.ytd` any name; `.ycd` any name; `.ydr` name must start with `w_`; `.ymt` any name
   except the 8 vanilla animal names. Placement `.xml`: fingerprint match required (below).
 - The safety gate exists because filename-alone matching would cross-wire unrelated items. Keep it.
+- **Log levels are a user contract, not a tidiness knob** (0.8.8, chocomintw's framework in #12,
+  combined with our collection-map fix). `logMessage(level, category, ...)` behind LOG_INFO/WARN/
+  ERROR/DEBUG, one lock (`g_logCs`) because the hook runs on more than one thread, and DEBUG off
+  unless `_debug.txt` exists in tex_overrides. The rule: **anything the README's log table
+  documents has to be INFO**, because the log is a support tool for players, not a dev trace. #12
+  had REDIRECT, PLACEMENT and RECLAIM at DEBUG; those are the three "did my file actually get
+  used" confirmations, one per override mechanism, and behind a debug switch nobody knows about
+  the default log stops answering the only question people ask. Promoted back. Caps announce
+  themselves (REDIRECT at 100) instead of truncating in silence.
+- **The `collection:` map must keep logging names it REFUSES** (`OTHER - never touched`). PR #11
+  cut those lines as noise, which is backwards: a refused name that is not logged looks identical
+  to one the server never streamed, and a user's log is the only channel through which a naming
+  family we do not know about ever reaches us. `caninesd` arriving that way is what killed the
+  folder whitelist in 0.8.5. What WAS broken is the label, and that is fixed: the tag now comes
+  from the collection (isPedCollection / isBlockedCollection / "depends on the file names inside")
+  instead of from `isAllowedKey` on whichever file streamed first, root files are listed under a
+  `file:` heading instead of being pushed through `collectionOf`, and the 500 cap announces itself
+  rather than truncating in silence.
 - **`.ymt`: refused for the 8 vanilla animal names, allowed for everything else** (0.8.5).
   SETTLED, do not reopen. The mechanism is finally known: a `.ymt` whose name the game has NEVER
   seen registers fine (a live server pushes ~12 of its own clothing-pack `.ymt`s through the same

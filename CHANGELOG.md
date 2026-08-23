@@ -2,11 +2,27 @@
 
 ## 0.8.8 (2026-08-23)
 
+- Works on servers that run an older game build. The plugin has to name every build it supports,
+  and it only named the two newest, so on a server pinned to anything else FiveM refused to load it
+  and nothing was written to the log at all. That looked like a plugin that does nothing. It now
+  names every build from 2189 up. Reported by benzwxc on a build 3407 server (issue #10).
 - Weapon models can be replaced now. Put a `.ydr` file named after the weapon (like
   `w_pi_pistol.ydr`) straight into `tex_overrides` and the plugin claims that slot the same way it
   claims a texture or animation. The file name has to start with `w_`, which is how every GTA V
   weapon is named. Anything else, like a vehicle part or a prop, is still refused.
 - Weapon textures (`.ytd`) already worked before this. Nothing changed there.
+- The log is easier to read. Every line now says how serious it is and which part of the plugin
+  wrote it, like `[INFO] [CLAIM]` or `[WARN] [SCAN]`, so when something does not work you can
+  search the file for `WARN` and `ERROR` and find the reason instead of reading all of it. Lines no
+  longer cut off with "and 12 more", and writes from different parts of the plugin can no longer
+  land on top of each other. Make an empty file called `_debug.txt` in `tex_overrides` if you want
+  the internal detail as well. Thanks to chocomintw for this.
+- The list of collections in the log was wrong in three ways and is fixed. A collection was
+  labelled by whichever of its files the server happened to stream first, so a collection you can
+  override could be marked as one you cannot. Loose files were being listed as collections, under
+  their own name plus extension. And the list stopped dead at 500 names without saying so, which
+  read like a server that streams nothing. Collections that are neither a character nor a blocked
+  one now say the honest thing, which is that it depends on the file names inside.
 
 ## 0.8.7 (2026-08-23)
 
