@@ -94,7 +94,8 @@ Name the folder after the model and put the parts in it.
 What the plugin checks is not the folder name but the files inside. They have to be named the way
 GTA names body parts, like `head_000_r.ydd` or `uppr_diff_001_a_uni.ytd`. That is what stops a
 vehicle texture or a map file being loaded onto somebody, which is the reason the rule exists.
-Story characters are refused outright, as are vehicles, props and maps.
+Story characters are refused outright, as are maps. Props and weapons have their own place, see
+below.
 
 ## Replacing animals
 
@@ -275,22 +276,41 @@ tex_overrides/
   w_pi_pistol.ytd          <- weapon textures
 ```
 
-The file name has to start with `w_`. That is the naming convention every GTA V weapon follows,
-and it is what stops vehicle parts, props and other `.ydr` files from being loaded by mistake.
+Every GTA V weapon is named `w_` and then the weapon, so that is the name to use.
 
 Texture-only mods (`.ytd` only, no model change) have always worked. Nothing new is needed for
 those.
 
-Which weapons this reaches has not been tested as thoroughly as the rest of the plugin yet, so
-here is the honest state of it. A weapon your **server** streams is listed in the log as a
-`Server file` line and can be replaced, the same as an animation. A weapon that came with GTA is
-not listed there, because that list only shows what the server sends. Those may or may not work,
-and nobody has posted a log either way.
+Both kinds work: weapons your **server** streams (listed in the log as `Server file` lines) and
+weapons that came with GTA. Models that came with GTA go through exactly the same slot claim as
+props, and a vanilla prop model was confirmed showing in game on 2026-08-25.
 
-So try it, then read `plugins/texoverride.log`. A line saying `OVERRIDE-REG` or `REDIRECT` with
-your file name on it means the plugin claimed the slot. If your weapon is unchanged in game and
-neither line is there, it did not take, and that is worth opening an issue about with the log
-attached.
+If a weapon does not change, read `plugins/texoverride.log`. A line saying `OVERRIDE-REG` or
+`REDIRECT` with your file name on it means the plugin claimed the slot. If neither line is there,
+open an issue with the log attached.
+
+## Replacing props
+
+A prop is any object that is not a character or a car: a phone, a notepad, a cardboard box, a
+police laptop, a sheet on a bed. Their model files are `.ydr` (a plain model) or `.yft` (a model
+with physics, like a door that swings), and their textures are `.ytd`. All three go straight into
+`tex_overrides`, no folder:
+
+```
+tex_overrides/
+  prop_cs_hand_radio.ydr   <- model
+  prop_cs_hand_radio.ytd   <- textures
+  prop_flag_sheriff.yft    <- a model with physics
+```
+
+If you copy a prop pack in as a folder, the log says `SKIP` and `files go straight into
+tex_overrides, not in a folder` for each one. Move the files up one level and restart.
+
+The file name is the whole rule. The plugin takes any `.ydr` or `.yft` at the root and gives it to
+the game under exactly that name, so it can only ever land on the object with that name. Props a
+server adds show up in the log as `Server file` lines and can be replaced, the same as a server
+weapon or animation. Props that came with GTA work too: `prop_beer_bottle.ydr` and
+`prop_beer_logger.ydr` dropped at the root showed the new models in game (2026-08-25).
 
 ## Changing files while the game runs
 
@@ -392,7 +412,9 @@ GTA itself, and it cannot make a pack fit that is simply too big. Shrinking the 
 ## Turning it off
 
 Create an empty file named `_OFF` (no file extension) inside `tex_overrides` and restart FiveM.
-The plugin stays installed but does nothing, including the update check.
+The plugin stays installed but returns before it creates logs, events, hooks or worker threads. It
+does not rotate `texoverride.log` or run the update check. That makes `_OFF` a clean A/B control:
+the ASI still passes FiveM's loader check, but none of texoverride's runtime machinery starts.
 
 ## Reading the log
 
@@ -444,7 +466,8 @@ work out a problem.
 | `PLACEMENT: ...` | A tattoo position change was applied |
 | `LIVE-ADD` / `LIVE-TAKEOVER` / `LIVE-UPDATE` | A file you changed while playing was picked up |
 | `Server collection: name kind [tag]` | A collection the server uses, what it is, and whether it is reachable |
-| `Server file: name [tag]` | A loose file the server streams, and whether it is reachable |
+| `Server file: name [overridable...]` | A loose file the server streams that you can replace |
+| `Other server files ... counted, not listed` | How many streamed files the plugin can never touch |
 | `Update available` / `Plugin is up to date` | Whether you have the newest version |
 | `Heartbeat (beat N) ...` | The plugin is still running |
 | `pattern NOT FOUND` | The game updated; the plugin needs an update |
@@ -455,6 +478,13 @@ The three tags on a `Server collection` line mean:
 - `depends on the file names inside`, the collection itself is fine, but each file still has to be
   named the way GTA names ped parts.
 - `OTHER - never touched`, a story or ambient character. The plugin refuses these on purpose.
+
+Collections are always listed, refused ones included, because that list is how new character names
+get found. Loose files are treated differently: the ones you can replace are listed, and everything
+else the server streams (car parts, props, map pieces, often tens of thousands of files) is only
+counted. Those names cannot ever be used, so listing them buried the useful lines and slowed the
+game down while it wrote them. Put a file called `_debug.txt` in `tex_overrides` if you want the
+full list back.
 
 ## How it works
 
@@ -670,13 +700,14 @@ reproducible with the build server building twice and comparing before it publis
 ## Files
 
 ```
-dllmain.cpp             the plugin: folder scan, hook, overrides, tattoo placement
+src/                    modular C++ source (hook, streaming, budget, tattoo placement, live reload, gate)
+dllmain.cpp             plugin entry point (DllMain)
 build.bat               MSVC build
 texoverride.rc          FX_ASI_BUILD stamp
 minhook/                vendored MinHook with the Freeze() patch
 COLLECTIONS.md          every valid collection folder name, characters and animals
 tools/make-zip.ps1      packs the release zip, folder list read from COLLECTIONS.md
-tools/gate_test.bat     runs the safety-gate cases against the real code in dllmain.cpp
+tools/gate_test.bat     runs the safety-gate cases against the real code in src/gate.h
 docs/overlay_index.tsv  every vanilla tattoo and overlay: name, file, position, texture
 docs/client-side-dlc-packs.md  how to run a DLC pack client side on FiveM (not texoverride)
 CHANGELOG.md            what changed in each version
