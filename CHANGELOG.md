@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.11 (2026-08-26)
+
+- The update popup can now download and install the new version for you (PR #18 by chocomintw).
+  Yes downloads `texoverride.asi` from the GitHub release, checks that it is a 64-bit DLL and that
+  its SHA-256 matches the one CI printed in the release notes, then swaps it in. The new version
+  loads the next time FiveM starts. No opens the release page as before, Cancel skips it. The
+  version you had is kept beside the new one as `texoverride.asi.old`, so if the new one misbehaves
+  you can delete `texoverride.asi` and rename the `.old` file back. A release whose notes carry no
+  hash is never installed this way; the popup falls back to opening the page. An empty
+  `_AUTO_UPDATE` file in `tex_overrides` installs updates without asking.
+
 ## 0.8.10 (2026-08-25)
 
 - The log file is now opened once and kept open, instead of being opened, written and closed for
