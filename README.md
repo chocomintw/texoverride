@@ -312,6 +312,29 @@ server adds show up in the log as `Server file` lines and can be replaced, the s
 weapon or animation. Props that came with GTA work too: `prop_beer_bottle.ydr` and
 `prop_beer_logger.ydr` dropped at the root showed the new models in game (2026-08-25).
 
+## Replacing vehicles
+
+A vehicle mod that REPLACES a car or bike the game already has works the same way as a prop. Each
+vehicle is three or four files, all named after the vehicle, and all of them go straight into
+`tex_overrides`, no folder:
+
+```
+tex_overrides/
+  bagger.yft        <- the model
+  bagger_hi.yft     <- the close-up model
+  bagger.ytd        <- the paint and parts
+  bagger+hi.ytd     <- close-up textures (not every mod has one)
+```
+
+Most vehicle mods come as an OpenIV package (a `.rpf` for the `mods` folder). Open it with
+OpenIV, walk down to `dlc.rpf`, `x64`, `vehicles.rpf`, and drag the files out. The `data`
+folder next to it (`handling.meta`, `carcols.meta` and friends) is not something the plugin can
+use, so leave it. The model and textures are what you see; that is what gets replaced.
+
+What does not work: a mod that ADDS a new vehicle with its own name. Adding a vehicle needs the
+game to read `vehicles.meta` and `handling.meta`, which the plugin cannot do. For those, keep
+using the `mods` folder package the mod came as.
+
 ## Changing files while the game runs
 
 You do not have to restart FiveM after every change. The plugin watches the `tex_overrides`
@@ -346,10 +369,9 @@ the hash, nothing is installed and the log says so.
 The version you had stays beside the new one as `texoverride.asi.old`. If the new version gives
 you trouble, delete `texoverride.asi` and rename the `.old` file back to `texoverride.asi`.
 
-To make updates install automatically without asking, create an empty file named
-`_AUTO_UPDATE` in `tex_overrides`.
-
-To turn the check off completely, create an empty file named `_NO_UPDATE_CHECK` inside `tex_overrides`.
+To make updates install automatically without asking, set `auto_update = yes` in
+`_settings.txt`. To turn the check off completely, set `no_update_check = yes`. See Settings
+below.
 
 That is the plugin's only network use. It sends nothing about you, your game or your files, and if you are
 offline it quietly does nothing.
@@ -405,15 +427,14 @@ budget: sized to this PC - 18.0 GB, up from the 7.8 GB the game set
 If your card has nothing to spare, the plugin says so and leaves the budget alone rather than
 pushing past what the card holds, which would make the game stutter instead of helping.
 
-To pick the number yourself, put a file named `_budget.txt` into `tex_overrides` containing just a
-number of GB, for example:
+To pick the number yourself, set `texture_budget` in `_settings.txt` to a number of GB:
 
 ```
-8
+texture_budget = 8
 ```
 
-Put a `0` in that file instead to switch the whole thing off and leave the game's budget exactly as
-it was. Either way, restart FiveM after changing it.
+Set it to `game` instead to switch the whole thing off and leave the game's budget exactly as it
+was. Either way, restart FiveM after changing it.
 
 A bigger ceiling buys headroom before the bug hits. It does not remove the bug, which lives inside
 GTA itself, and it cannot make a pack fit that is simply too big. Shrinking the files in the
@@ -421,10 +442,51 @@ GTA itself, and it cannot make a pack fit that is simply too big. Shrinking the 
 
 ## Turning it off
 
-Create an empty file named `_OFF` (no file extension) inside `tex_overrides` and restart FiveM.
-The plugin stays installed but returns before it creates logs, events, hooks or worker threads. It
-does not rotate `texoverride.log` or run the update check. That makes `_OFF` a clean A/B control:
-the ASI still passes FiveM's loader check, but none of texoverride's runtime machinery starts.
+Set `off = yes` in `_settings.txt` and restart FiveM. The plugin stays installed but returns
+before it creates logs, events, hooks or worker threads. It does not rotate `texoverride.log` or
+run the update check. That makes it a clean A/B control: the ASI still passes FiveM's loader
+check, but none of texoverride's runtime machinery starts.
+
+## Settings
+
+The first time it runs, the plugin writes `_settings.txt` into your `tex_overrides` folder. Open
+it in Notepad. Every option is listed, switched off, and explained where it sits. Change a word,
+save, restart FiveM.
+
+```
+# Write extra detail into texoverride.log.
+# Turn this on when someone is helping you work out a problem, and turn it off
+# again afterwards. It makes the log a lot longer.
+debug = no
+```
+
+That is the whole thing. `no` becomes `yes` and the option is on. Lines starting with `#` are
+notes and the plugin skips them.
+
+| Option | What it does |
+|--------|--------------|
+| `off` | Plugin stays installed but does nothing at all |
+| `debug` | Adds `DEBUG` detail to the log |
+| `texture_budget` | `auto`, `game`, or a number of GB |
+| `auto_update` | Installs new versions without asking |
+| `no_update_check` | Never checks whether a new version is out |
+
+`yes`, `on`, `true` and `1` all mean on. Anything else means off. Capital letters do not matter.
+
+The file is only ever created, never rewritten, so your changes and any notes you add to it
+survive every update. Delete it and you get a fresh one with everything off.
+
+If you used the older marker files (`_off`, `_debug`, `_budget.txt` and so on), they still work,
+with or without `.txt` on the end. A marker file turns its option on, and `_settings.txt` cannot
+switch it back off, so delete the marker file when you want to go back to the settings file.
+
+Two other files turn up in that folder on their own. The plugin writes those. Leave them alone,
+apart from deleting `_quarantine.txt` when you want a quarantined file tried again.
+
+| File | What it is |
+|------|-----------|
+| `_quarantine.txt` | Files refused after a crash; delete it to try them again |
+| `_inflight.txt` | Scratch file used while registering; disappears on a clean exit |
 
 ## Reading the log
 
@@ -442,9 +504,8 @@ The level is `INFO`, `WARN` or `ERROR`. If something did not work, search the fi
 `ERROR` first, because those two carry the reason. The category says which part of the plugin
 spoke: `CORE`, `SCAN`, `COLLECTION`, `AUDIT`, `CLAIM`, `VERIFY`, `LIVE`, `TATTOO` or `UPDATE`.
 
-There is a fourth level, `DEBUG`, which is off unless you make an empty file called `_debug.txt`
-inside `tex_overrides`. It adds internal detail that is only useful when someone is helping you
-work out a problem.
+There is a fourth level, `DEBUG`, which is off unless you set `debug = yes` in `_settings.txt`.
+It adds internal detail that is only useful when someone is helping you work out a problem.
 
 | Line | What it means |
 |---|---|
@@ -490,11 +551,13 @@ The three tags on a `Server collection` line mean:
 - `OTHER - never touched`, a story or ambient character. The plugin refuses these on purpose.
 
 Collections are always listed, refused ones included, because that list is how new character names
-get found. Loose files are treated differently: the ones you can replace are listed, and everything
-else the server streams (car parts, props, map pieces, often tens of thousands of files) is only
-counted. Those names cannot ever be used, so listing them buried the useful lines and slowed the
-game down while it wrote them. Put a file called `_debug.txt` in `tex_overrides` if you want the
-full list back.
+get found. Loose files are treated differently. The ones you can replace are listed, up to 500 of
+them. Everything else the server streams (car parts, map pieces, often tens of thousands of files)
+is only counted, because those names can never be used, and listing them buried the useful lines
+and slowed the game down while it wrote them.
+
+Set `debug = yes` in `_settings.txt` and both limits come off: every file is named and the 500
+limit no longer applies. That is how you find the exact name of one particular server prop.
 
 ## How it works
 

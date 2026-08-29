@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.8.12 (2026-08-29)
+
+- One settings file instead of a folder of oddly named marker files (issue #20 by chocomintw).
+  The plugin writes `_settings.txt` into `tex_overrides` on first run. Every option is in it,
+  switched off, with a plain English note above it saying what it does. Change `no` to `yes`,
+  save, restart FiveM. The options are `off`, `debug`, `texture_budget`, `auto_update` and
+  `no_update_check`. `yes`, `on`, `true` and `1` all mean on, and capital letters do not matter.
+
+  The file is only ever created, never rewritten, so your edits and any notes you add survive
+  updates. Delete it to get a fresh one.
+
+  Nothing breaks for anyone using the old marker files. `_off`, `_debug`, `_verbose`, `_budget`,
+  `_auto_update` and `_no_update_check` all still work, and now each is accepted with or without
+  `.txt` on the end, so it no longer matters whether Windows is hiding file extensions when you
+  make one. A marker file turns its option on and `_settings.txt` cannot switch it back off, so
+  delete the marker file to go back to the settings file.
+
+- `debug = yes` now lists every overridable server file instead of stopping at 500, and names the
+  ones it used to only count. Looking up the exact name of one server prop is the main reason to
+  read that part of the log, and the cap got in the way of the one job it has. The default is
+  unchanged, so nobody who has not asked for it pays the extra log lines.
+
+- A file with no `RSC7` header is refused instead of loaded. Those are raw dumps rather than real
+  game files, usually a texture renamed to `.ytd` or something pulled out with the wrong export
+  option, and the game dies in its own loader with "Invalid fixup, address is neither virtual nor
+  physical" the moment it streams one in. The log now names the file and says to export it with
+  OpenIV. `.ymt` is exempt, since a metadata file is not always an RSC7 resource.
+
+- README: how to install a vehicle mod that replaces a car or bike the game already has. The
+  model and texture files go straight into `tex_overrides` like any other prop. Adding a brand new
+  vehicle still needs the `mods` folder package it came with, because that needs `vehicles.meta`
+  and `handling.meta`, which the plugin cannot read.
+
 ## 0.8.11 (2026-08-26)
 
 - The update popup can now download and install the new version for you (PR #18 by chocomintw).

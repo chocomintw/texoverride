@@ -3,6 +3,7 @@
 #include "core/state.h"
 #include "core/logger.h"
 #include "core/utils.h"
+#include "core/settings.h"
 #include "core/pattern.h"
 #include "streaming/gate.h"
 #include "streaming/budget.h"
@@ -217,10 +218,13 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
                 // A loose file we could actually take over, so it answers "what can I override
                 // here". Worth listing, but a big server streams enough of them to be worth a cap,
                 // and THIS is the line the 500 cap was always meant for.
-                if (++g_collListed <= 500)
+                // debug lifts it: the one job the cap gets in the way of is looking up the exact
+                // name of a specific server prop, which is the whole reason to read this list, and
+                // a player who has gone and turned debug on has asked for the long version.
+                if (++g_collListed <= 500 || g_set.debug)
                     LOG_INFO(LogCategory::Collection, "Server file:       %-40s [overridable, put yours in tex_overrides/]", coll.c_str());
                 else if (g_collListed == 501)
-                    LOG_WARN(LogCategory::Collection, "500 overridable server files listed; the rest are counted only");
+                    LOG_WARN(LogCategory::Collection, "500 overridable server files listed; the rest are counted only - set debug = yes in _settings.txt to list them all");
             }
             else {
                 // Refused on TYPE or PREFIX, never on a name we might one day learn: a .ymap will
@@ -231,7 +235,7 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
                 // this thread also held g_cs and the game's main thread sat waiting on g_cs in
                 // drainOps. Count them, say so once, and put the names behind _debug.txt.
                 if (++g_collOther == 1)
-                    LOG_INFO(LogCategory::Collection, "Other server files (vehicle, prop and map data) are counted, not listed - create _debug.txt in tex_overrides to see them");
+                    LOG_INFO(LogCategory::Collection, "Other server files (vehicle, prop and map data) are counted, not listed - set debug = yes in _settings.txt to see them");
                 LOG_DEBUG(LogCategory::Collection, "Server file:       %-40s [OTHER - never touched]", coll.c_str());
             }
         }
@@ -303,6 +307,7 @@ void backgroundStartup()
     crashSaverStartup();
     g_crashSaverRan = true;
     locateRuntimePatterns();
+    writeDefaultSettings();   // first run: leave the user a file that explains itself
     readBudgetFile();
     decideBudget();   // DXGI only works out here, after DllMain has returned
     walkDir(std::string(g_overrideDir), "", g_cands);
@@ -440,9 +445,9 @@ void Setup()
     _snprintf_s(g_overrideDir, MAX_PATH, _TRUNCATE, "%s\\tex_overrides\\", plug.c_str());
     // a download the updater never finished; texoverride.asi.old is kept on purpose (rollback)
     DeleteFileA((std::string(self) + ".download").c_str());
-    { std::string off = std::string(g_overrideDir) + "_OFF";
-      g_off = (GetFileAttributesA(off.c_str()) != INVALID_FILE_ATTRIBUTES); }
-    // _OFF is the diagnostic control. Stop before logs, events, scans, hooks or worker threads
+    loadSettings();   // marker files plus _settings.txt; never logs, the log does not exist yet
+    g_off = g_set.off;
+    // _off is the diagnostic control. Stop before logs, events, scans, hooks or worker threads
     // so it behaves like an installed but unloaded plugin rather than a bypass inside the hook.
     if (g_off) return;
     _snprintf_s(g_inflightPath,   MAX_PATH, _TRUNCATE, "%s_inflight.txt",   g_overrideDir);
@@ -451,15 +456,7 @@ void Setup()
     g_logCsInit = true;
     InitializeCriticalSection(&g_cs);   // must exist before the hook can fire
 
-    // check for verbose / debug logging triggers
-    {
-        std::string verb = std::string(g_overrideDir) + "_verbose.txt";
-        std::string dbg  = std::string(g_overrideDir) + "_debug.txt";
-        if (GetFileAttributesA(verb.c_str()) != INVALID_FILE_ATTRIBUTES ||
-            GetFileAttributesA(dbg.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            g_minLogLevel = LogLevel::Debug;
-        }
-    }
+    if (g_set.debug) g_minLogLevel = LogLevel::Debug;
 
     // fresh log every launch, but keep one previous generation: after a crash the next launch
     // used to destroy the exact log that showed what the crashed session was doing
