@@ -1,5 +1,98 @@
 # Changelog
 
+## 0.8.18 (2026-09-02)
+
+- `hide_overlay = always` keeps FiveM's version text and mod pack counter off your screen for
+  the whole session, not only around a screenshot. The 0.8.16 notes said there would never be
+  such a setting. That is reversed here, on purpose, and said out loud rather than slipped in.
+  What has not changed: this is your own screen only. The server sees nothing, other players
+  see nothing, and the plugin still writes into no code of FiveM's or the game's. The key list
+  works as before if you would rather keep the text and only lose it in pictures.
+
+## 0.8.17 (2026-09-02)
+
+- You can now keep your files in folders of your own inside `tex_overrides`. Put
+  `clothingpack1/mp_f_freemode_01_female_heist/uppr_013_r.ydd` and it loads exactly as if the
+  `clothingpack1` folder were not there. The rule: a clothing file's collection is the folder it
+  sits in directly, and any folders above that are yours to name. Weapons, props, animations
+  and tattoo textures can go in folders too; they still load by their own file name. The flat
+  layout keeps working unchanged, so nothing has to move.
+  If two packs ship the same file, the first one found wins and the log says which copy was
+  skipped (`DUPLICATE`). Files the plugin cannot place now get a `SKIP` line that says why.
+
+## 0.8.16 (2026-09-01)
+
+- New `hide_overlay` setting keeps FiveM's version text and mod pack counter out of your
+  screenshots. FiveM writes its version in one corner of the screen and "N mod packs loaded" in
+  the other, and both end up in every picture you take. List the keys you take screenshots with,
+  for example `hide_overlay = printscreen, f9`, and those two lines come off the screen for a
+  second and a half when you press one, then come back. Nothing else changes: the server's chat
+  and HUD stay where they are. There is no way to leave the text off, and there will not be one.
+  The branding is FiveM's and the plugin does not remove it; this is only about it not being in
+  your saved pictures.
+  If you already have a `_settings.txt`, add the line yourself. The plugin never rewrites that
+  file, so an existing install does not get the new option on its own.
+  One limit, stated plainly: the text comes off on the next frame, so a tool that grabs the
+  screen in the same instant as the keypress can still catch it. ShareX, Steam and the like grab
+  it a moment later and come out clean. Windows' own PrintScreen to clipboard is the one that
+  may not.
+- This adds no patch into the game. It moves two entries on one of FiveM's own drawing lists
+  and moves them back. Nothing is written into any code, FiveM's or the game's, and the
+  antivirus profile of the file is the same as 0.8.15's.
+
+## 0.8.15 (2026-08-30)
+
+- Fixes the crash on startup that 0.8.14 brought in. Several people saw the game die once or
+  twice during loading before it would start. 0.8.14 was the first version to hook into FiveM's
+  own per-frame events, and it did that from a background thread a second or two into loading,
+  which is the exact moment FiveM's own components are doing the same thing. Two threads editing
+  the same list with no lock can lose an entry, and the entry that goes missing is not ours. The
+  plugin now signs up while the game is still being handed to FiveM, before any of that starts,
+  and the sign-up itself is a single atomic write that cannot drop somebody else's entry.
+- The texture pool reading is taken on the game's own thread now, instead of from the plugin's
+  background thread. It asks the game for a pointer, and a question like that belongs where the
+  game asks it.
+- The plugin can update itself again. It checks the download against a SHA-256 before installing
+  anything, and it used to read that hash out of the release notes, which meant a hand-edited
+  release page left it with nothing to check against and every install stuck on the old version.
+  It now reads the hash GitHub publishes on the file itself, and only falls back to the notes.
+
+## 0.8.14 (2026-08-29)
+
+- Live reload now runs on FiveM's own per-frame event instead of a patch into the game's message
+  pump. One less patch into the game, and the work always lands on the game thread. If a FiveM
+  update ever stops exporting that event, the old pump is still there as a fallback, and the log
+  says which one it used. To be straight about what this does and does not do: the folder is
+  watched and your changed file is read again, but if the game already has the old version loaded
+  in memory it carries on drawing that, and taking the item off and putting it back on does not
+  reliably force a fresh read. Editing a file the game has not loaded yet is the case that works.
+  For anything already on your ped, restart FiveM.
+- New refresh key. Press F11 in game and the plugin reads `tex_overrides` again straight away,
+  the way SA modloader worked. Set `refresh_key` in `_settings.txt` to any f1 to f12 key, a
+  letter, a digit, or `off` to switch it off. It only responds while the game window is focused,
+  and it always writes a line in the log, including "nothing has changed since the last look", so
+  a key that finds nothing never looks like a key that does not work.
+- Tattoo placement files with only one or two presets now work, and so do files where you edited
+  every value. The layout only has to be worked out once per session, and every file after that
+  is matched by its preset names alone.
+- The log now says how much of the texture budget the game is actually using, and warns once when
+  it passes 90 percent. That is the number every "my textures went missing" report needed and
+  nobody had.
+- Each file now reports what it really costs in memory, including the textures it shares with
+  other items. The old figure came from the file on disk, which charged a model nothing for the
+  textures it pulls in with it.
+- The live-reload watcher no longer waits forever on a server that streams nothing of its own.
+
+## 0.8.13 (2026-08-29)
+
+- The old marker files migrate themselves and then go away. 0.8.12 left two ways to set every
+  option, the settings file and the `_off` / `_debug` / `_verbose` / `_budget` / `_auto_update` /
+  `_no_update_check` files, which is not standardising anything. Now the first launch that finds
+  one copies its value into `_settings.txt`, deletes it, and says in the log what it moved. Your
+  settings carry over on that same launch, so nothing changes behaviour, and from then on the
+  folder holds one settings file instead of a scattering of empty ones. Notes you added to the
+  file survive, and a setting whose line you deleted is put back rather than lost.
+
 ## 0.8.12 (2026-08-29)
 
 - One settings file instead of a folder of oddly named marker files (issue #20 by chocomintw).

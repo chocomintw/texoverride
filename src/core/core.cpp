@@ -5,6 +5,7 @@
 #include "core/utils.h"
 #include "core/settings.h"
 #include "core/pattern.h"
+#include "core/cfx.h"
 #include "streaming/gate.h"
 #include "streaming/budget.h"
 #include "streaming/streaming.h"
@@ -12,6 +13,7 @@
 #include "features/crash_saver.h"
 #include "features/scanner.h"
 #include "features/live_reload.h"
+#include "features/clean_shot.h"
 #include "features/update.h"
 #include "MinHook.h"
 #include <windows.h>
@@ -307,7 +309,7 @@ void backgroundStartup()
     crashSaverStartup();
     g_crashSaverRan = true;
     locateRuntimePatterns();
-    writeDefaultSettings();   // first run: leave the user a file that explains itself
+    migrateSettings();   // first run writes the file; a marker file is absorbed and deleted
     readBudgetFile();
     decideBudget();   // DXGI only works out here, after DllMain has returned
     walkDir(std::string(g_overrideDir), "", g_cands);
@@ -342,9 +344,30 @@ void scanFinishSafe()
     if (g_scanDone) SetEvent(g_scanDone);
 }
 
+// The watcher normally starts on the first file the server streams, because that is when the
+// hook fires and the plugin knows streaming is live. On a server that streams nothing at all the
+// hook never fires, and then nothing here ever starts. This is the independent signal: FiveM says
+// when the game has finished its first load, whatever the server did or did not send.
+static void connectFirstLoad()
+{
+    void* ev = cfxSymbol("rage-nutsnbolts-five.dll", "?OnFirstLoadCompleted@@3V?$fwEvent@$$V@@A");
+    if (!ev) return;
+    cfxConnect(ev, [] {
+        LOG_DEV(LogCategory::Core, "OnFirstLoadCompleted fired (idsReady=%ld)", (long)g_idsReady);
+        InterlockedExchange(&g_firstLoadDone, 1);
+        // Claiming happens inside the hook, so no hook means no claims. Say so rather than
+        // leaving a session that looks healthy and replaced nothing.
+        if (!g_off && !g_idsReady && !g_ovs.empty())
+            LOG_WARN(LogCategory::Core, "Game finished loading but nothing has streamed through the hook yet, so no override has been claimed");
+        return true;
+    });
+}
+
 DWORD WINAPI BeatLoop(LPVOID)
 {
     int beatOurs = 0, beatTheirs = 0, beatLoaded = 0;   // ours / re-taken / resident right now
+    long watchWait = 0;                                // ticks spent waiting for a start signal
+    long heavyInMemory = 0;
     long prevReclaims = 0, prevRedirects = 0, prevLateBinds = 0;
     int prevTheirs = 0;
     scanFinishSafe();   // all user-file reads, optional scans and the budget decision, off the loader lock
@@ -352,11 +375,22 @@ DWORD WINAPI BeatLoop(LPVOID)
         for (int tick = 0; tick < 15; ++tick) {
             Sleep(1000);
             // once streaming is live, start the live-reload watcher — before that there is
-            // nothing a change could apply to anyway
-            if (!g_watcherStarted && !g_off && g_idsReady) {
-                HANDLE w = CreateThread(nullptr, 0, WatchLoop, nullptr, 0, nullptr);
-                if (w) { g_watcherStarted = true; CloseHandle(w); }
-                else LOG_WARN(LogCategory::Live, "Live reload: watcher thread could not start (err %lu), retrying next tick", GetLastError());
+            // nothing a change could apply to anyway.
+            // NEITHER signal is guaranteed to arrive, so there is a plain time fallback under
+            // them: g_idsReady is only ever set inside the hook, so a server that streams nothing
+            // never sets it, and OnFirstLoadCompleted is raised ONCE per process behind a bool
+            // (rage-nutsnbolts-five, the state handler at RVA 0xfbc0, flag at 0x2CDB5), so
+            // connecting to it after the game has already loaded means it never fires for us.
+            // That is what happened in the 2026-08-29 test: it fired for nobody, twice.
+            if (!g_watcherStarted && !g_off) {
+                ++watchWait;
+                if (g_idsReady || g_firstLoadDone || watchWait >= 90) {
+                    LOG_DEV(LogCategory::Live, "starting watcher after %ld tick(s) (idsReady=%ld firstLoad=%ld)",
+                            watchWait, (long)g_idsReady, (long)g_firstLoadDone);
+                    HANDLE w = CreateThread(nullptr, 0, WatchLoop, nullptr, 0, nullptr);
+                    if (w) { g_watcherStarted = true; CloseHandle(w); }
+                    else LOG_WARN(LogCategory::Live, "Live reload: watcher thread could not start (err %lu), retrying next tick", GetLastError());
+                }
             }
             // re-assert: DLC mounts and FiveM's loader re-point claimed slots after us; whoever
             // writes the handle last wins, so write ours back. Same mechanism Cfx's own override
@@ -389,8 +423,17 @@ DWORD WINAPI BeatLoop(LPVOID)
                         // pinned the object (body skin blends AddRef their source txds).
                         if (loaded && !ov.loadedSeen) {
                             ov.loadedSeen = 1;
-                            if (e.handle == ov.handle) LOG_DEBUG(LogCategory::Claim, "LOADED: %s from your file", ov.slot);
-                            else LOG_WARN(LogCategory::Claim, "LOADED: %s from the GAME file (handle %08x); your file shows only after the game drops and reloads it", ov.slot, e.handle);
+                            // The scan's cost audit reads page flags out of the file on disk, so it
+                            // charges a drawable nothing for the texture dictionaries it shares.
+                            // Now that the slot is resident the game can be asked what it really
+                            // took, dependencies included.
+                            uint64_t mem = slotMemoryCost(which);
+                            char cost[64] = "";
+                            if (mem) _snprintf_s(cost, _TRUNCATE, " (%.1f MB in memory with dependencies)", mem / 1048576.0);
+                            if (e.handle == ov.handle) LOG_DEBUG(LogCategory::Claim, "LOADED: %s from your file%s", ov.slot, cost);
+                            else LOG_WARN(LogCategory::Claim, "LOADED: %s from the GAME file (handle %08x)%s; your file shows only after the game drops and reloads it", ov.slot, e.handle, cost);
+                            if (mem >= (8ull << 20) && ++heavyInMemory <= 20)
+                                LOG_WARN(LogCategory::Audit, "  HEAVY IN MEMORY: %s really costs %.1f MB loaded (shrink it to fight texture loss)", ov.slot, mem / 1048576.0);
                         }
                         if (e.handle == ov.handle) { ++beatOurs; continue; }
                         ++beatTheirs;
@@ -515,6 +558,21 @@ void Setup()
                 else LOG_INFO(LogCategory::Core, g_off ? "Hooked, disabled" : "LIVE — will register base overrides on first stream call");
             }
         }
+    }
+
+    // Both subscriptions to FiveM's own frame events happen HERE, on the loader thread, and that
+    // timing is the whole safety argument. FiveM loads plugins from LauncherInterface::PostLoadGame,
+    // which has not yet handed the game its entry point, so no game thread is running and no Cfx
+    // component is inserting into these event lists. 0.8.14 connected from worker threads a second
+    // or two later instead, which is the middle of the game's own init and exactly when Cfx
+    // components subscribe; two unsynchronised splices into one list can drop a handler, and a
+    // FiveM handler that quietly goes missing during load is a crash seconds later with nothing of
+    // ours on the stack. Connecting this early also means OnFirstLoadCompleted can actually fire
+    // for us, which it never did when we arrived after the first load had already finished.
+    if (!g_off) {
+        g_framePumpConnected = connectFramePump();
+        connectFirstLoad();
+        connectShotGate();
     }
 }
 

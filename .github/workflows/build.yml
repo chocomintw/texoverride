@@ -97,3 +97,46 @@ jobs:
           } >> notes.md
           gh release create "$GITHUB_REF_NAME" texoverride.zip texoverride.asi --title "$GITHUB_REF_NAME" --notes-file notes.md \
             || gh release upload "$GITHUB_REF_NAME" texoverride.zip texoverride.asi --clobber
+      # Tell BlancoBot a new version is out. blancodagoat.dev already has the whole pipeline:
+      # POST a `tool_announce` job, the API pushes it onto Redis, and the gateway bot posts the
+      # embed in the announce channel as itself rather than as a raw webhook. So all this has to
+      # hand over is the changelog. A fork has no ANNOUNCE_TOKEN and skips, and a failed
+      # announcement is a warning rather than a failed build, because by the time this runs the
+      # release itself is already published.
+      - name: Announce on Discord
+        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        shell: bash
+        env:
+          ANNOUNCE_TOKEN: ${{ secrets.ANNOUNCE_TOKEN }}
+        run: |
+          if [ -z "$ANNOUNCE_TOKEN" ]; then
+            echo "No ANNOUNCE_TOKEN secret; skipping the announcement."
+            exit 0
+          fi
+          # The embed is a headline list, not the changelog. CHANGELOG.md is written for the
+          # release page: every entry leads with what changed and then explains why, wrapped at
+          # 100 columns for reading in an editor. Pasted into an embed that came out long, broken
+          # at the wrong places, and with the indented sub-paragraphs rendering as loose text
+          # between the bullets, so half the list had dots and half did not.
+          # First awk: take the current section, drop its heading, join each top-level bullet
+          # into one line and throw away the sub-paragraphs. Second awk: keep the first sentence.
+          # What is left is one short line per change. The embed title links to the full notes.
+          body=$(awk '/^## /{n++} n==1' CHANGELOG.md | tail -n +2 | awk '
+            /^- /            { if (line != "") print line; line = substr($0, 3); inb = 1; next }
+            /^[[:space:]]*$/ { if (line != "") { print line; line = "" } inb = 0; next }
+                             { if (inb) { sub(/^[[:space:]]+/, ""); line = line " " $0 } }
+            END              { if (line != "") print line }
+          ' | awk '{ i = index($0, ". "); print "- " (i ? substr($0, 1, i) : $0) }')
+          url="https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
+          # Discord caps a description at 4096. Cut early and link out, rather than letting the
+          # bot truncate somebody mid-sentence.
+          if [ ${#body} -gt 3800 ]; then
+            body="${body:0:3800}
+
+          [Read the full changelog]($url)"
+          fi
+          jq -n --arg t "texoverride $GITHUB_REF_NAME" --arg d "$body" --arg u "$url" '{type:"tool_announce",payload:{title:$t,description:$d,url:$u,color:15575105,footer:"FiveM client-side clothing, weapon and animation overrides"}}' > announce.json
+          code=$(curl -sS -o resp.txt -w '%{http_code}' -X POST https://blancodagoat.dev/api/enqueue-discord-job -H "Authorization: Bearer $ANNOUNCE_TOKEN" -H 'Content-Type: application/json' --data @announce.json)
+          echo "enqueue-discord-job: HTTP $code $(cat resp.txt)"
+          test "$code" = "200"
