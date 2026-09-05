@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.8.21 (2026-09-03)
+
+- `hide_overlay = always` no longer cuts DUI screens in half. A player found that with the
+  setting on, a DUI television drew only one triangle of its screen, and drew normally with the
+  setting off. The handler the setting takes off the screen draws FiveM's version watermark, and
+  in a stock FiveM that is the last draw of every frame. Taking it away left the frame ending in
+  a different state, and the next frame's screen quad lost a triangle to it. The plugin now puts
+  a handler of its own in that exact spot. It draws nothing you can see: a zero-size triangle,
+  which is the same trick FiveM itself uses to settle its drawing state before each frame.
+- The same handler is also the one place FiveM draws the text its other parts queue up, and the
+  place its text memory is recycled. With it parked, that text (the red reconnect warning, for
+  one) never appeared and the queue only ever grew. The stand-in makes that call too.
+
+## 0.8.20 (2026-09-03)
+
+- The re-assert loop checks that a slot still carries the file's name before writing its handle
+  back. FiveM frees a slot the server created once that resource is gone, and after a reconnect
+  the same index can belong to a different file. Writing into it then pointed a stranger's asset
+  at one of your files, and the game read a shirt where it wanted a lamp. It only affected files
+  the server streamed first and the plugin took over later (`LATE-BIND`, live reload, occupied-slot
+  takeover), and only after a disconnect and reconnect in the same session. The lookup by name
+  happens only when something else has written the slot, so the ordinary beat costs nothing
+  extra. When the name has moved the plugin follows it and the log says `MOVED`; when the name is
+  gone it waits for it to come back, the way `LATE-BIND` already does.
+
+## 0.8.19 (2026-09-02)
+
+- A folder whose name starts with `disabled` is skipped, with everything inside it. Rename
+  `Pack1` to `disabledPack1` and it stops loading; rename it back and it loads again. That is
+  the whole feature: swap between packs by renaming folders, no deleting or moving files. The
+  log says `DISABLED` and the folder name at startup so you can see it was skipped on purpose.
+  Renaming mid-session works for turning a pack on. Turning one off needs a restart, because
+  files already handed to the game stay there until FiveM closes. Suggested by a user.
+
 ## 0.8.18 (2026-09-02)
 
 - `hide_overlay = always` keeps FiveM's version text and mod pack counter off your screen for
