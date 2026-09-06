@@ -29,6 +29,8 @@ It adds internal detail that is only useful when someone is helping you work out
 | `HUGE file - x MB` | Over 32 MB; it is loaded, but shrink it first if you start crashing |
 | `UNREADABLE file` | The file could not be opened, so it was not loaded |
 | `SKIP file` | The name does not fit any rule; the reason is on the line |
+| `PREFERRED slot - a takes the slot from b` | A file in an `_override` folder won over another copy |
+| `DUPLICATE slot - ...` | Two folders hold the same file; this copy was not used |
 | `IGNORED file` | Not a type the game can be handed this way; the reason is on the line |
 | `CRASH SAVER: ...` | Last run died on a file; it is skipped this launch so you can get in |
 | `QUARANTINED file` | Skipped after a crash; delete `_quarantine.txt` to try it again |

@@ -91,6 +91,15 @@ in directly has to be the collection name. Weapons, props, animations and tattoo
 in folders too. If two packs contain the same file, the first one found is used and the log says
 `DUPLICATE` for the other.
 
+To pick which pack wins those clashes, put `_override` at the end of its folder name. A file in
+`feseropack_override/` beats the same file in any ordinary folder, whatever order the folders are
+read in, and the log says `PREFERRED` on that line. This is for keeping a big pack whole and
+stacking your own edits on top of it, the same idea as a loose folder overriding an installed pack
+on RAGE MP. It works on a collection folder as well, so `mp_m_freemode_01_override/uppr_013_r.ydd`
+still loads as part of `mp_m_freemode_01`. Two `_override` folders holding the same file are back
+to first one found. Which copy wins is decided when the game starts, so restart FiveM after adding
+an `_override` pack.
+
 To switch a pack off without deleting it, put `disabled` at the front of its folder name:
 `disabledPack1` is skipped whole, `Pack2` next to it still loads. Rename it back to turn it on
 again. Files already showing in game stay until you restart, so restart FiveM after renaming.

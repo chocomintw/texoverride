@@ -45,6 +45,7 @@ struct Cand {
     std::string slot;
     std::string full;
     Cost c;
+    bool prio = false;   // came out of an *_override folder, so it outranks an ordinary copy
 };
 
 struct StrEntry {

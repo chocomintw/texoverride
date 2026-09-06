@@ -367,6 +367,13 @@ void rescanTree(const std::string& base, const std::string& sub, bool quiet, std
             else
                 batch.push_back({ 1, { _strdup(key.c_str()), nullptr }, handle });
         }
+        else if (isNew && !quiet) {
+            // A brand new file whose slot is already taken is a second copy of something already
+            // loaded, usually an _override pack copied in mid-session. Which copy wins is decided
+            // by the startup scan, so this one does nothing until the next launch. Silence here
+            // is indistinguishable from a plugin that did not notice the file at all.
+            LOG_INFO(LogCategory::Live, "Live reload: %s is already loaded from another folder; restart FiveM to use this copy", key.c_str());
+        }
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 }

@@ -10,8 +10,9 @@
 #include <unordered_map>
 
 // The walk itself opens nothing: it only decides which names are ours.
-// One key can only be provided once; two packs shipping the same file keep the first one seen.
-static std::unordered_set<std::string> g_seenKeys;
+// One key can only be provided once. Two packs shipping the same file keep the first one seen,
+// unless the later one sits under an *_override folder, which is the user saying which copy wins.
+static std::unordered_map<std::string, size_t> g_seenKeys;   // key -> where it sits in out
 
 void walkDir(const std::string& base, const std::string& rel, std::vector<Cand>& out)
 {
@@ -39,12 +40,23 @@ void walkDir(const std::string& base, const std::string& rel, std::vector<Cand>&
             LOG_WARN(LogCategory::Scan, "SKIP %s - %s", relStr.c_str(), why ? why : "refused");
             continue;
         }
-        if (!g_seenKeys.insert(slotStr).second) {
-            LOG_WARN(LogCategory::Scan, "DUPLICATE %s - %s provides the same file as one already listed; this copy is ignored", slotStr.c_str(), relStr.c_str());
+        bool prio = isOverridePath(relStr);           // *_override folder: this copy wins
+        auto seen = g_seenKeys.find(slotStr);
+        if (seen != g_seenKeys.end()) {
+            Cand& held = out[seen->second];
+            if (prio && !held.prio) {
+                LOG_INFO(LogCategory::Scan, "PREFERRED %s - %s takes the slot from %s", slotStr.c_str(), relStr.c_str(), ::rel(held.full.c_str()));
+                held.full = fwd(base + childRel);
+                held.prio = true;
+            } else {
+                LOG_WARN(LogCategory::Scan, "DUPLICATE %s - %s provides the same file as one already listed; this copy is ignored%s",
+                         slotStr.c_str(), relStr.c_str(), prio && held.prio ? " (another _override folder got there first)" : "");
+            }
             continue;
         }
         if (g_quarantine.count(slotStr)) continue;   // crash saver; already logged loudly
-        out.push_back({ slotStr, fwd(base + childRel), Cost() });
+        g_seenKeys[slotStr] = out.size();
+        out.push_back({ slotStr, fwd(base + childRel), Cost(), prio });
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 }

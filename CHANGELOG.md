@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.22 (2026-09-06)
+
+- Put `_override` at the end of a folder name and the files inside it win against the same file
+  in any other folder. Keep a big pack whole in `feseroclothingpack/` and put your own edited
+  copies in `feseropack_override/`, and yours are the ones that load. Before this the winner was
+  whichever folder Windows handed over first, which nobody could steer. The log says `PREFERRED`
+  on the line where a file takes a slot off another copy.
+- The suffix works on a collection folder too, so `mp_m_freemode_01_override/uppr_013_r.ydd`
+  still loads as part of `mp_m_freemode_01`. Two `_override` folders holding the same file are
+  back to first one found, and the log still says `DUPLICATE`.
+- Which copy wins is worked out when the game starts. Copy an `_override` pack in while you are
+  playing and the log now tells you it needs a restart, instead of saying nothing at all.
+
 ## 0.8.21 (2026-09-03)
 
 - `hide_overlay = always` no longer cuts DUI screens in half. A player found that with the
