@@ -24,7 +24,7 @@
 // would never be one, which is reversed here on purpose and said so in the notes). Either way
 // this is the player's own screen only: the server and other players never see any of it.
 //
-// How the key is seen: the frame pump polls GetAsyncKeyState, the same way the refresh key does.
+// How the key is seen: the frame pump polls GetAsyncKeyState once a frame.
 // A low-level keyboard hook was tried first (2026-09-01) and, with the game window in front, it
 // never saw F9 at all and saw only the release half of PrintScreen; the same hook saw both keys
 // perfectly with the game closed. Polling reads the physical key state and does not care who
@@ -104,7 +104,7 @@ static bool overlayGate()
 }
 
 // Main thread, every frame, from framePumpTick. Edge off the raw key state, foreground test
-// second, same shape as refreshKeyTick and for the same reason: a press that arrives while
+// second, and the order matters: a press that arrives while
 // something else is in front should say so rather than look like a press never seen.
 void shotKeyTick()
 {

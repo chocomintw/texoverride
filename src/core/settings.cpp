@@ -52,16 +52,6 @@ texture_budget = auto
 auto_update = no
 
 
-# Key that rescans tex_overrides straight away.
-#
-# The plugin normally notices new and changed files on its own. This is the
-# manual version: press the key in game and it looks again immediately, which
-# is handy while you are trying things out. Write off to disable it.
-#
-#   f1 to f12, or a single letter or digit
-refresh_key = f11
-
-
 # Take FiveM's own writing out of your screenshots.
 #
 # FiveM draws its version in one corner and "N mod packs loaded" in the other,
@@ -95,11 +85,11 @@ static bool truthy(const std::string& v)
     return v == "yes" || v == "on" || v == "true" || v == "1" || v == "enabled";
 }
 
-// The refresh key, as a Windows virtual-key code. 0 means the user turned it off, -1 means they
-// wrote something that is not a key, which is worth a warning rather than a silent default.
-// GetAsyncKeyState rather than FiveM's InputHook::IsKeyDown on purpose. It needs no export a
-// FiveM update could rename, and the foreground check below is what IsKeyDown would have bought:
-// pressing the key in a browser while the game runs behind it must not rescan anything.
+// A key name from _settings.txt (hide_overlay) as a Windows virtual-key code. 0 means the user
+// turned it off, -1 means they wrote something that is not a key, which is worth a warning rather
+// than a silent default. The caller polls GetAsyncKeyState rather than FiveM's InputHook::IsKeyDown
+// on purpose: it needs no export a FiveM update could rename, and the caller's foreground check
+// is what IsKeyDown would have bought.
 int vkFromName(const std::string& raw)
 {
     std::string v = lower(raw);
@@ -189,7 +179,6 @@ void loadSettings()
         else if (k == "auto_update")     g_set.autoUpdate    = g_set.autoUpdate    || truthy(v);
         else if (k == "no_update_check") g_set.noUpdateCheck = g_set.noUpdateCheck || truthy(v);
         else if (k == "texture_budget" && g_set.budget.empty()) g_set.budget = v;
-        else if (k == "refresh_key") g_set.refreshKey = v;
         else if (k == "hide_overlay") g_set.hideOverlay = v;
     }
     fclose(f);

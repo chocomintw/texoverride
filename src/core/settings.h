@@ -19,7 +19,6 @@ struct Settings
     std::string budget;   // raw value; resolved in readBudgetFile, which can actually log
     // Default lives here rather than only in the file text, so the installs that already have a
     // _settings.txt (which is never rewritten) get the key without having to add a line.
-    std::string refreshKey = "f11";
     std::string hideOverlay;   // comma separated screenshot keys, or "always"; empty = leave FiveM's overlays alone
 };
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.23 (2026-09-07)
+
+- The refresh key is gone. Pressing F11 read the folder again, but the watcher already does that
+  on its own the moment a file changes, so the key had nothing left to find and looked broken.
+  What no key can do is make the game draw the new file: the game keeps whatever it has loaded
+  until the item streams in again. A `refresh_key` line left in `_settings.txt` is ignored.
+
 ## 0.8.22 (2026-09-06)
 
 - Put `_override` at the end of a folder name and the files inside it win against the same file
