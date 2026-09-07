@@ -133,7 +133,10 @@ void drainOps()   // runs on the game's main thread
             }
         } else {
             if (g_getRawStreamerFn && g_rawGetEntryFn && rawInvalidate(op.handle))
-                LOG_INFO(LogCategory::Live, "LIVE-UPDATE: %s reread from disk (reapply outfit/tattoo to see it)", op.ov.slot);
+                // Honest about the ceiling: re-statting the entry points it at the new bytes, so
+                // the next STREAM IN reads them. It cannot touch what the game already holds in
+                // memory, and taking the item off and putting it back does not force a reload.
+                LOG_INFO(LogCategory::Live, "LIVE-UPDATE: %s reread from disk (the game keeps the copy it already loaded until you restart)", op.ov.slot);
             else
                 LOG_WARN(LogCategory::Live, "Live reload: %s changed, could not refresh it, restart to apply", op.ov.slot);
             free((void*)op.ov.slot);

@@ -125,10 +125,10 @@ folder while you play and reacts on its own when something in it changes.
 - Save an edited `overlays.xml` and the tattoo moves on your ped within a second or two. This
   makes tuning easy: nudge a number, save, look, repeat.
 - Overwrite a `.ytd` or `.ydd` the plugin already uses and the file is read again straight away.
-  Whether you SEE it without restarting depends on the game, not on the plugin. If the game still
-  has the old version loaded in memory, it keeps drawing that, and taking the item off and putting
-  it back on does not always force a fresh read. When that happens, restart FiveM. Editing a file
-  the game has not loaded yet is the case that works reliably.
+  You will not SEE the change until you restart, and that is the game, not the plugin. Once the
+  game has loaded a file it holds on to it, and nothing reaches in and swaps it: taking the item
+  off and putting it back on does not force a fresh read. Editing a file the game has not loaded
+  yet is the case that shows up without a restart.
 - Drop in a file with a name nothing else uses and it is picked up right away.
 
 The one thing that cannot happen live is taking over a name the server or a DLC has already
