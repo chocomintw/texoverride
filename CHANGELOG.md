@@ -4,8 +4,11 @@
 
 - The refresh key is gone. Pressing F11 read the folder again, but the watcher already does that
   on its own the moment a file changes, so the key had nothing left to find and looked broken.
-  What no key can do is make the game draw the new file: the game keeps whatever it has loaded
-  until the item streams in again. A `refresh_key` line left in `_settings.txt` is ignored.
+  What no key can do is make the game draw the new file: once the game has loaded something it
+  holds on to it until you restart.
+- The plugin takes the old `refresh_key` line out of your `_settings.txt` on the next start, along
+  with the note above it, so the file stops describing a setting that is not there. Everything
+  else in the file is left exactly as you wrote it.
 
 ## 0.8.22 (2026-09-06)
 

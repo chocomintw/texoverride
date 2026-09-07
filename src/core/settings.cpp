@@ -120,6 +120,31 @@ static bool splitLine(const std::string& raw, std::string& k, std::string& v)
     return !k.empty();
 }
 
+// Options that no longer exist. _settings.txt is never rewritten wholesale, so a dropped option
+// would otherwise sit in every existing install for ever, still explaining a feature that is not
+// there. The note above the line goes with it, or the file keeps describing the missing thing.
+static const char* kDeadKeys[] = { "refresh_key" };   // 0.8.23
+
+static bool stripDeadKeys(std::vector<std::string>& lines)
+{
+    bool changed = false;
+    for (size_t i = 0; i < lines.size(); ) {
+        std::string k, v;
+        bool dead = false;
+        if (splitLine(lines[i], k, v))
+            for (const char* d : kDeadKeys) if (k == d) { dead = true; break; }
+        if (!dead) { ++i; continue; }
+        size_t a = i;
+        while (a > 0) { std::string t = trim(lines[a - 1]); if (t.empty() || t[0] != '#') break; --a; }
+        size_t b = i + 1;
+        while (b < lines.size() && trim(lines[b]).empty()) ++b;   // the gap after, so blocks stay spaced
+        lines.erase(lines.begin() + a, lines.begin() + b);
+        i = a;
+        changed = true;
+    }
+    return changed;
+}
+
 // Note a marker file if it is there. The value is always "yes": a marker file only ever existed
 // to turn something on, so that is the whole of what it can mean.
 static bool marker(const char* name, const char* key)
@@ -208,8 +233,6 @@ void migrateSettings()
         LOG_WARN(LogCategory::Core, "Could not create _settings.txt in tex_overrides; running on defaults");
         return;
     }
-    if (g_markers.empty()) return;
-
     std::string path = ctlPath("_settings");
     std::vector<std::string> lines;
     {
@@ -219,6 +242,9 @@ void migrateSettings()
         while (fgets(buf, sizeof buf, f)) lines.push_back(buf);
         fclose(f);
     }
+
+    bool dropped = stripDeadKeys(lines);
+    if (g_markers.empty() && !dropped) return;
 
     std::vector<bool> placed(g_markers.size(), false);
     for (auto& raw : lines) {
@@ -242,6 +268,9 @@ void migrateSettings()
     }
     for (auto& l : lines) fputs(l.c_str(), f);
     fclose(f);
+
+    if (dropped)
+        LOG_INFO(LogCategory::Core, "Took refresh_key out of _settings.txt; it is not a setting any more");
 
     for (auto& m : g_markers) {
         if (DeleteFileA(m.path.c_str()))
