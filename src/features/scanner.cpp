@@ -123,6 +123,24 @@ void scanFinish()
         }
     }
 
+    // Body skin and face overlays are the one family where a slot claim is provably not enough.
+    // Verified in game on b3751, 2026-09-08: the claim takes the real slot, the game loads the
+    // user file from it, the log says "from your file", and the ped still draws stock. The ped
+    // builds its face and body out of these before anything reachable from the streaming slot.
+    // Say so at scan time, because the log otherwise reads perfectly while nothing changes, and
+    // that costs somebody a whole evening before they think to doubt it.
+    {
+        static const char* kUnreachable[] = { "mp_fm_skin_", "mp_fm_faov_", "ng_hip_faov_", "mp_eye_colour" };
+        int n = 0;
+        for (auto& ov : g_ovs) {
+            if (strchr(ov.slot, 0x2F)) continue;            // root keys only
+            for (const char* pre : kUnreachable)
+                if (_strnicmp(ov.slot, pre, strlen(pre)) == 0) { ++n; break; }
+        }
+        if (n)
+            LOG_WARN(LogCategory::Scan, "  %d body skin / face overlay file(s) here (mp_fm_skin_*, mp_fm_faov_*, ng_hip_faov_*, mp_eye_colour). These CANNOT be replaced from tex_overrides: the slot claim works and the log will say your file loaded, but the ped is built from these earlier and keeps the stock look. Ship them in a FiveM mods folder package instead. Head models and head textures in a collection folder are unaffected.", n);
+    }
+
     costReport();
     g_cands.clear(); g_cands.shrink_to_fit();
 }

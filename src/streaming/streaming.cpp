@@ -297,6 +297,55 @@ StrMgr* exportedManagerSafe()
     __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
 }
 
+// Look up ONE exact key, no fallbacks. targetStreamingId cannot answer this question, because its
+// folder fallback only runs when the bare name MISSES, and for these files the bare name hits.
+static uint32_t slotForExactKey(const char* extension, const char* key)
+{
+    if (!g_getStreamingManagerFn || !g_getStreamingModuleFn) return 0xFFFFFFFF;
+    try {
+        void* manager = g_getStreamingManagerFn();
+        if (!manager) return 0xFFFFFFFF;
+        void* module = g_getStreamingModuleFn((uint8_t*)manager + 0x1B8, extension);
+        if (!module) return 0xFFFFFFFF;
+        return findModuleSlotSafe(module, key, runningGameBuild());
+    }
+    catch (...) { return 0xFFFFFFFF; }
+}
+
+// One NAME can own more than one slot. Vanilla ships mp_fm_skin_f_up_whi.ytd twice inside x64v.rpf,
+// in ped_mp_overlay_txds.rpf and in strm_peds_mp_overlay_txds.rpf, and the two are DIFFERENT images
+// (diffed straight out of the archives: the first carries Rockstar blue nipple markers, the second
+// is a flat wash). FindSlot returns one of them. Taking that one over and holding it leaves the ped
+// reading the other, which is exactly the shape of "registered, loaded from your file, still draws
+// vanilla". Root keys carry no folder, so nothing on the normal path ever probes the container form.
+// Returns a second, different index for this name, or 0xFFFFFFFF.
+uint32_t containerAliasId(const char* slot, uint32_t primary)
+{
+    static const char* kContainers[] = {
+        "ped_mp_overlay_txds", "strm_peds_mp_overlay_txds",
+        "streamedpeds_mp", "streamedpeds_players",
+    };
+    if (!slot || strchr(slot, 0x2F)) return 0xFFFFFFFF;   // root keys only
+    const char* dot = strrchr(slot, 0x2E);
+    if (!dot || dot == slot || !dot[1]) return 0xFFFFFFFF;
+    std::string stem(slot, (size_t)(dot - slot));
+    std::string extension(dot + 1);
+    const char* seps[] = { "/", "\\" };
+    for (const char* container : kContainers) {
+        for (const char* sep : seps) {
+            std::string key = std::string(container) + sep + stem;
+            uint32_t id = slotForExactKey(extension.c_str(), key.c_str());
+            if (validStreamingId(id) && id != primary) {
+                static std::set<std::string> said;
+                if (said.insert(extension).second)
+                    LOG_INFO(LogCategory::Claim, "Slot lookup for .%s: this name also owns the slot \"%s\" (id=%u), which is NOT the one the bare name resolves to; pinning both", extension.c_str(), key.c_str(), id);
+                return id;
+            }
+        }
+    }
+    return 0xFFFFFFFF;
+}
+
 int recoverOccupiedSlot(Ov& ov)
 {
     resolveOccupiedSlotExports();
@@ -313,6 +362,7 @@ int recoverOccupiedSlot(Ov& ov)
         return OCCUPIED_WAITING;
     }
     ov.id = target;
+    if (ov.altId == 0xFFFFFFFF) ov.altId = containerAliasId(ov.slot, target);
     __try {
         StrEntry& entry = g_mgr->entries[target];
         if (entry.handle != ov.handle && (entry.flags & 3) < 2) entry.handle = ov.handle;

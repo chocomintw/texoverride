@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.25 (2026-09-08)
+
+- Your files were being registered into slots the game never reads. This is the big one, and it
+  affected every file in every version so far. The plugin claims a name on the first file the
+  game streams, but at that moment the game cannot answer "what does this name point at yet",
+  so the claim invented a brand new slot instead of taking over the real one. Your file loaded,
+  the log said it was held, and the game carried on reading its own copy. The plugin now waits
+  for the game to be ready to answer before it claims anything. On one real pack this turned
+  758 invented slots into 220 real takeovers.
+- Added support for game build 3889 (The Kortz Center Heist) and 3323. Without a line for the
+  build you are on, FiveM refuses the plugin and writes no log at all.
+- Body skin and face overlays cannot be replaced from tex_overrides, and the log now says so at
+  startup instead of letting you find out the hard way. Files named `mp_fm_skin_*`,
+  `mp_fm_faov_*`, `ng_hip_faov_*` and `mp_eye_colour` get claimed, get loaded, and still do not
+  show, because your ped is built from them earlier than any of this reaches. Those belong in a
+  FiveM mods folder package. Head models and head textures in a collection folder are not
+  affected and keep working normally.
+- Dropping the game copy of a file now also happens when the plugin had to take the slot back
+  before it saw the file load. That case was slipping through, so a file could sit there held
+  by us and still show the stock version.
+- The log no longer tells you to switch on `debug` in a line that only prints when `debug` is
+  already on.
 ## 0.8.24 (2026-09-08)
 
 - Your files now win a slot the game already filled. Claiming a name early was only ever half

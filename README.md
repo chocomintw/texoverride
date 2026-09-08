@@ -108,12 +108,29 @@ again. Files already showing in game stay until you restart, so restart FiveM af
 |------|---------------|------------|
 | Clothes | a subfolder, such as `mp_m_freemode_01/` | `.ydd` `.ytd` |
 | Animals | a subfolder, such as `a_c_husky/` | `.ydd` `.ytd` `.ymt` |
-| Tattoos, skin, face paint, beards | straight in | `.ytd` |
+| Tattoos | straight in | `.ytd` |
 | Where a tattoo sits, and how big it is | straight in | `.xml` |
 | Animations | straight in | `.ycd` |
 | Firearms | straight in | `.ydr` `.ytd` |
 | Props | straight in | `.ydr` `.yft` `.ytd` |
 | Vehicles | straight in | `.yft` `.ydr` `.ytd` |
+
+### What this plugin cannot do: body skin and face overlays
+
+These do not work through `tex_overrides`, and putting them there does nothing useful:
+
+- `mp_fm_skin_*` (body skin, both genders, every tone)
+- `mp_fm_faov_*` and `ng_hip_faov_*` (beards, eyebrows, lips, moles, freckles)
+- `mp_eye_colour.ytd`
+
+The plugin claims their names, wins the slot, and the game loads your file from it. The log says
+so and it is telling the truth. The ped still draws the stock texture, because the ped builds its
+face and body out of these before anything a streaming slot claim can reach. Confirmed in game on
+b3751, 2026-09-08, after the slot claim was proved correct.
+
+Put these in a FiveM mods folder package instead. Head models and head textures
+(`head_000_r.ydd`, `head_diff_000_a_whi.ytd`) are components inside a collection folder and do
+work through `tex_overrides` normally.
 
 **[Step by step for each of these, with examples](docs/replacing-files.md)**
 

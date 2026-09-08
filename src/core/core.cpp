@@ -22,6 +22,37 @@
 #include <string>
 #include <unordered_map>
 
+// The store cannot answer a name lookup on FiveM's FIRST stream call, which is where the base
+// claim used to run. Every extension logged "the module does not know that name" there, and the
+// identical lookup succeeded about three seconds later. That killed the pin-both path stone dead
+// in every session ever logged: aliased was always 0, so a name the game already owned got a
+// freshly minted index, our handle landed in a slot nothing looks up, and the log read perfectly
+// while the game kept drawing its own file. Wait for the store to start answering before
+// claiming. The probe is two base-game names that have shipped in streamedpeds_mp.rpf since
+// launch, so it does not depend on what the user happens to have in tex_overrides.
+static bool storeAnswersNames()
+{
+    static const char* kProbe[] = { "mp_f_freemode_01/head_diff_000_a_whi.ytd",
+                                    "mp_f_freemode_01/head_000_r.ydd" };
+    for (const char* probe : kProbe) {
+        int why = SLOT_OK;
+        if (validStreamingId(targetStreamingId(probe, &why))) return true;
+    }
+    // Never trade the claim away entirely: the whole point of claiming early is to be holding the
+    // slot before the server's own mount arrives. If the store still says nothing by the deadline,
+    // claim on the old terms and say so, because an unpinned claim still beats no claim.
+    static ULONGLONG first = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (!first) first = now;
+    if (now - first < 20000) return false;
+    static bool said = false;
+    if (!said) {
+        said = true;
+        LOG_WARN(LogCategory::Claim, "The game's streaming store never answered a name lookup in 20s; claiming without checking which id each name already resolves to (files the game also ships may not take effect)");
+    }
+    return true;
+}
+
 uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asName, bool b2)
 {
     InterlockedIncrement(&g_regTotal);
@@ -60,7 +91,7 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
 
         // once the stream system is live (first call), register our files as base slot overrides.
         // o_regRaw is the trampoline (original), so these calls do NOT re-enter this hook.
-        if (!g_off && !g_didRegister)
+        if (!g_off && !g_didRegister && storeAnswersNames())
         {
             g_didRegister = true;
             // the pool must exist by now (this very call registers into it); if it looks wrong,
@@ -242,7 +273,8 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
                 // in a single second. Every one was an fopen/fprintf/fclose inside g_logCs while
                 // this thread also held g_cs and the game's main thread sat waiting on g_cs in
                 // drainOps. Count them, say so once, and put the names behind _debug.txt.
-                if (++g_collOther == 1)
+                // With debug on the names ARE listed, one line below, so the hint would be a lie.
+                if (++g_collOther == 1 && !g_set.debug)
                     LOG_INFO(LogCategory::Collection, "Other server files (vehicle, prop and map data) are counted, not listed - set debug = yes in _settings.txt to see them");
                 LOG_DEBUG(LogCategory::Collection, "Server file:       %-40s [OTHER - never touched]", coll.c_str());
             }
@@ -465,7 +497,15 @@ DWORD WINAPI BeatLoop(LPVOID)
                             // The game got there first. Holding the slot changes nothing while the
                             // object stays resident, so hand it to the game thread to be dropped;
                             // the next request for the name then comes through our handle.
-                            if (readBy != ov.handle && g_set.forceReload && !ov.dropQueued) {
+                            // A slot reclaimed before any load edge was seen counts as theirs too:
+                            // the handle reads as ours NOW, but nobody watched the load start, so
+                            // the resident object may still be the game's. This is the common case
+                            // during the loading screen, and guessing the other way is what leaves
+                            // a dead animation dictionary for the session. Dropping costs nothing
+                            // when the guess is wrong, since forceReloadSlot only ever drops a
+                            // resident slot that already carries our handle.
+                            const bool maybeTheirs = readBy != ov.handle || (!ov.loadEdgeSeen && ov.reclaimedEarly);
+                            if (maybeTheirs && g_set.forceReload && !ov.dropQueued) {
                                 ov.dropQueued = 1;
                                 g_dropQ.push_back(DropReq{ which, ov.handle, ov.slot });
                                 InterlockedExchange(&g_dropPending, 1);
@@ -474,10 +514,12 @@ DWORD WINAPI BeatLoop(LPVOID)
                                 LOG_WARN(LogCategory::Claim, "LOADED: %s from the GAME file (handle %08x)%s; %s", ov.slot, readBy, cost,
                                          g_set.forceReload ? "dropping it so the game reads yours instead"
                                                            : "your file shows only after the game drops and reloads it");
-                            else if (ov.loadEdgeSeen || !ov.reclaimedEarly)
+                            else if (!maybeTheirs)
                                 LOG_DEBUG(LogCategory::Claim, "LOADED: %s from your file%s", ov.slot, cost);
                             else
-                                LOG_WARN(LogCategory::Claim, "LOADED: %s holds your file now%s, but it was reclaimed before the load was seen, so the game may have read its own copy", ov.slot, cost);
+                                LOG_WARN(LogCategory::Claim, "LOADED: %s holds your file now%s, but it was reclaimed before the load was seen, so the game may have read its own copy; %s", ov.slot, cost,
+                                         g_set.forceReload ? "dropping it to be sure"
+                                                           : "turn force_reload on in _settings.txt to have it dropped and reread");
                             if (memP >= (8ull << 20) && ++heavyInMemory <= 20)
                                 LOG_WARN(LogCategory::Audit, "  HEAVY IN MEMORY: %s really costs %.1f MB of texture memory loaded (shrink it to fight texture loss)", ov.slot, memP / 1048576.0);
                         }
