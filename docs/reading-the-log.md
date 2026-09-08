@@ -47,6 +47,8 @@ It adds internal detail that is only useful when someone is helping you work out
 | `OVERRIDE-FAILED: slot <- file` | Registration failed and produced no usable entry |
 | `LATE-BIND: slot ...` | A previously missing target appeared and was attached |
 | `RECLAIM: slot (old -> ours)` | The game tried to take an item back; the plugin re-took it |
+| `FORCED-RELOAD: slot dropped from memory` | The game had already loaded its own copy; the plugin dropped it so yours is read instead |
+| `LOADED: slot from the GAME file` | The game read its own copy of that file. With `force_reload` on, the line above follows |
 | `MOVED: slot no longer lives at id=...` | The game freed that slot and reused the index; the plugin follows the name instead of writing into it |
 | `REDIRECT name -> file` | A server file was swapped for yours |
 | `PLACEMENT: ...` | A tattoo position change was applied |

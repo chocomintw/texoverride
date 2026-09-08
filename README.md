@@ -219,8 +219,18 @@ notes and the plugin skips them.
 | `auto_update` | Installs new versions without asking |
 | `no_update_check` | Never checks whether a new version is out |
 | `hide_overlay` | Keys that take FiveM's corner text off the screen for a moment (`printscreen`, `f1` to `f12`, a letter, a digit), or `always` |
+| `force_reload` | On by default. Makes your file win a slot the game already filled |
 
 `yes`, `on`, `true` and `1` all mean on. Anything else means off. Capital letters do not matter.
+
+`force_reload` is the one option that starts switched on. The plugin claims a file's name before
+the game starts, but the game can still get there first and load its own copy, and once something
+is in memory it stays there. Body skin, eye colour and some clothing textures hit this a lot,
+because the same texture name lives in four different game archives and every one of them is
+loaded during startup. With this on, the plugin drops the game's copy so your file is read
+instead, and the log says `FORCED-RELOAD` when it does. Turn it off if you would rather the
+plugin never touched anything the game already has open; your files then look unchanged until
+something makes the game load them again.
 
 The file is only ever created, never rewritten, so your changes and any notes you add to it
 survive every update. Delete it and you get a fresh one with everything off.

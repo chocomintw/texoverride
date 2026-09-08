@@ -19,6 +19,10 @@ struct Settings
     std::string budget;   // raw value; resolved in readBudgetFile, which can actually log
     // Default lives here rather than only in the file text, so the installs that already have a
     // _settings.txt (which is never rewritten) get the key without having to add a line.
+    // On by default: holding a slot the game already loaded does nothing on screen unless
+    // the object is dropped so the game reads it again. Off is the escape hatch, since this
+    // is the one thing the plugin does that calls into the game's streaming system.
+    bool forceReload    = true;
     std::string hideOverlay;   // comma separated screenshot keys, or "always"; empty = leave FiveM's overlays alone
 };
 

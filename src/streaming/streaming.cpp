@@ -43,30 +43,64 @@ void resolveOccupiedSlotExports()
             "?GetPgRawStreamerEntries@rage@@YAAEBU?$chunkyArray@URawEntry@fiCollection@rage@@$0EAA@$0EA@@1@XZ");
 }
 
-// What a loaded slot really costs, dependencies included. The cost audit at scan time can only
-// read the RSC7 page flags out of the file on disk, which is the file's own size and nothing
-// more; a clothing .ydd that drags three shared texture dictionaries in with it is charged for
-// none of them there. FiveM's own devtools walks the dependency tree and adds it all up, and
-// exports the walk, so once a slot is resident the honest figure is one call away.
+// What a loaded slot really costs. The cost audit at scan time can only read the RSC7 page flags
+// out of the file on disk, which is the file's own size and nothing more; a clothing .ydd that
+// drags three shared texture dictionaries in with it is charged for none of them there. FiveM's
+// devtools exports a walk of the dependency tree, so once a slot is resident a better figure is
+// one call away.
+//
+// It only walks HALF of it, and that is not obvious from the name. Disassembled at
+// devtools-five+0x332A0: CountDependencyMemory seeds its accumulator from
+// gta-streaming-five!StreamingDataEntry::ComputeVirtualSize and then recurses over
+// GetDependencies adding more of the same. Virtual is system memory. Texture pixels live in
+// PHYSICAL memory, so every texture dictionary came back as ~0 and the HEAVY IN MEMORY warning
+// below could never once fire for a .ytd, which is the file type every texture-loss report is
+// actually about: mp_fm_skin_f_up_whi.ytd audits at 16.0 MB from its page flags and reported
+// 0.0 MB loaded. ComputePhysicalSize is exported beside it, same this-is-the-entry calling
+// shape, so ask for both and report them apart the way the scan audit already does.
+//
+// ponytail: physical is the entry's OWN pages; the dependency recursion is virtual-only because
+// GetDependencies sits behind a build-dependent vtable offset we do not have a pattern for. A
+// .ytd is exact (it has no dependencies), a drawable is charged for its own vertex buffers but
+// not for the pixels of texture dictionaries it shares. Walk it properly if a shared-texture
+// report ever needs the difference.
 //
 // Read-only: it looks up the streaming module (moduleMgr at +0x1B8, the offset Cfx's Streaming.h
 // uses too), asks it for the dependency list, and recurses. SEH because it walks game-owned
 // arrays that a mid-eviction slot can leave half valid.
 typedef uint64_t (*CountDepMem_t)(void* mgr, uint32_t idx);
+typedef uint64_t (*ComputePhysSize_t)(void* entry, uint32_t idx);   // __thiscall: entry is `this`
 static CountDepMem_t g_countDepMemFn = nullptr;
+static ComputePhysSize_t g_physSizeFn = nullptr;
 static bool g_countDepTried = false;
 
-uint64_t slotMemoryCost(uint32_t id)
+void slotMemoryCost(uint32_t id, uint64_t* virt, uint64_t* phys)
 {
+    if (virt) *virt = 0;
+    if (phys) *phys = 0;
     if (!g_countDepTried) {
         g_countDepTried = true;
-        g_countDepMemFn = (CountDepMem_t)cfxSymbol("devtools-five.dll", "?CountDependencyMemory@@YA_KPEAVManager@streaming@@I@Z");
+        g_countDepMemFn = (CountDepMem_t)cfxSymbol("devtools-five.dll",
+            "?CountDependencyMemory@@YA_KPEAVManager@streaming@@I@Z");
+        g_physSizeFn = (ComputePhysSize_t)cfxSymbol("gta-streaming-five.dll",
+            "?ComputePhysicalSize@StreamingDataEntry@@QEAA_KI@Z");
     }
-    if (!g_countDepMemFn || !g_getStreamingManagerFn || !validStreamingId(id)) return 0;
+    if (!validStreamingId(id)) return;
     __try {
-        void* mgr = g_getStreamingManagerFn();
-        return mgr ? g_countDepMemFn(mgr, id) : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        if (virt && g_countDepMemFn && g_getStreamingManagerFn) {
+            void* mgr = g_getStreamingManagerFn();
+            if (mgr) *virt = g_countDepMemFn(mgr, id);
+        }
+        if (phys && g_physSizeFn) {
+            StrMgr* manager = exportedManagerSafe();
+            if (manager && id < (uint32_t)manager->numEntries)
+                *phys = g_physSizeFn(&manager->entries[id], id);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (virt) *virt = 0;
+        if (phys) *phys = 0;
+    }
 }
 
 // Contains no C++ objects so the virtual lookup can be isolated behind SEH. XBRVirtual inserts
@@ -87,6 +121,73 @@ uint32_t findModuleSlotSafe(void* module, const char* stem, int build)
         return base + local;
     }
     __except (EXCEPTION_EXECUTE_HANDLER) { return 0xFFFFFFFF; }
+}
+
+// Holding a slot only decides what the game reads NEXT time. If it already loaded the texture
+// from its own file, writing our handle back changes nothing on screen: the object stays
+// resident and every reference keeps pointing at it, which is why the log has always had to say
+// "your file shows only after the game drops and reloads it". Body skin is the worst case,
+// because the ped's skin blend takes a reference on its source txds and holds it for the life of
+// the ped, so "next time" may never come.
+//
+// So drop it ourselves. This is Cfx's own sequence, verbatim from LoadStreamingFile.cpp (~3455,
+// the RemoveSlot path): the dependent count in bits 2..15 makes RemoveObject refuse, so clear
+// that first, then ClearRequiredFlag, then RemoveObject. The slot itself survives, only the
+// loaded object goes, and the next request for the name loads it through the handle we hold.
+// RemoveSlot is deliberately NOT called: that frees the index and hands it to whatever registers
+// next, which is exactly the corruption the 0.8.20 name check exists to catch.
+//
+// No SEH here, on purpose. These two calls mutate streaming state, and the plugin's standing
+// rule is that catching a fault inside game code leaves the engine half updated and turns our
+// bug into a crash somewhere else minutes later. Must run on the game thread; the caller
+// journals the key first, so a fault costs one launch and quarantines the file.
+typedef void (*RequestObject_t)(void* mgr, uint32_t id, int flags);
+typedef bool (*ReleaseObject_t)(void* mgr, uint32_t id);
+typedef bool (*ClearRequired_t)(void* mgr, uint32_t id, int flags);
+static ReleaseObject_t g_releaseObjectFn = nullptr;
+static ClearRequired_t g_clearRequiredFn = nullptr;
+static bool g_dropTried = false;
+
+bool dropExportsReady()
+{
+    if (!g_dropTried) {
+        g_dropTried = true;
+        g_releaseObjectFn = (ReleaseObject_t)cfxSymbol("gta-streaming-five.dll",
+            "?ReleaseObject@Manager@streaming@@QEAA_NI@Z");            // RemoveObject
+        g_clearRequiredFn = (ClearRequired_t)cfxSymbol("gta-streaming-five.dll",
+            "?ReleaseObject@Manager@streaming@@QEAA_NIH@Z");           // ClearRequiredFlag
+    }
+    return g_releaseObjectFn && g_clearRequiredFn && g_getStreamingManagerFn;
+}
+
+int forceReloadSlot(uint32_t id, uint32_t ourHandle)
+{
+    if (!dropExportsReady()) return DROP_NO_EXPORTS;
+    StrMgr* manager = exportedManagerSafe();
+    if (!manager || !validStreamingId(id) || id >= (uint32_t)manager->numEntries) return DROP_BAD_SLOT;
+    void* mgr = g_getStreamingManagerFn();
+    if (!mgr) return DROP_BAD_SLOT;
+    StrEntry& e = manager->entries[id];
+    // Only a slot that is resident AND already carries our handle. Dropping one mid-load would
+    // race the loader, and dropping one that does not point at us yet would just make the game
+    // read its own file a second time.
+    if ((e.flags & 3) != 1) return DROP_NOT_LOADED;
+    if (e.handle != ourHandle) return DROP_NOT_OURS;
+    if (e.flags & 0xFFFC) e.flags &= ~0xFFFC;   // dependent count, or RemoveObject refuses
+    g_clearRequiredFn(mgr, id, 0xF1);
+    g_releaseObjectFn(mgr, id);
+    return DROP_OK;
+}
+
+const char* dropWhyText(int w)
+{
+    switch (w) {
+    case DROP_OK:         return "dropped";
+    case DROP_NO_EXPORTS: return "FiveM's streaming exports are missing";
+    case DROP_BAD_SLOT:   return "the slot index is out of range";
+    case DROP_NOT_LOADED: return "it is no longer in memory";
+    default:              return "the slot stopped pointing at your file";
+    }
 }
 
 const char* slotWhyText(int w)

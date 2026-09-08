@@ -73,6 +73,14 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
             for (auto& ov : g_ovs)
             {
                 uint32_t id = 0xFFFFFFFF;
+                // Ask the store what this name resolves to BEFORE claiming it. o_regRaw mints a
+                // fresh index and re-points the name at it, so the same question asked afterwards
+                // can only ever hand back the id we were just given. That is what it did: on a
+                // 335 file pack every claim came back "unaliased" and the pin-both path below had
+                // never once fired, while the ids themselves were 335 consecutive integers in
+                // registration order, which scattered vanilla names could not possibly own.
+                int why = SLOT_OK;
+                uint32_t before = targetStreamingId(ov.slot, &why);
                 // named in _inflight.txt for the duration of the call; if the game dies in
                 // there, the next launch quarantines this key and boots without it
                 InterlockedExchange(&g_journalHot, 1);
@@ -90,12 +98,10 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
                     // its original one. The handle then lands in a slot nothing looks up and
                     // the log reads perfectly while nothing changes in game (seen on .ycd:
                     // seven scattered vanilla dictionaries came back with seven CONSECUTIVE
-                    // ids, which existing indices could never be). So ask the store what the
-                    // name really resolves to, and pin that entry as well.
-                    int why = SLOT_OK;
-                    uint32_t tgt = targetStreamingId(ov.slot, &why);
+                    // ids, which existing indices could never be). So pin the entry the store
+                    // resolved the name to before we touched it, as well.
                     noteSlotWhy(ov.slot, why);
-                    if (validStreamingId(tgt) && tgt != id) { ov.altId = tgt; ++aliased; }
+                    if (validStreamingId(before) && before != id) { ov.altId = before; ++aliased; }
                 }
                 else {
                     occupied = recoverOccupiedSlot(ov);
@@ -367,6 +373,7 @@ DWORD WINAPI BeatLoop(LPVOID)
 {
     int beatOurs = 0, beatTheirs = 0, beatLoaded = 0;   // ours / re-taken / resident right now
     long moved = 0;                                    // slots whose name moved to another id
+    size_t revalCursor = 0;                            // round robin over the name revalidation
     long watchWait = 0;                                // ticks spent waiting for a start signal
     long heavyInMemory = 0;
     long prevReclaims = 0, prevRedirects = 0, prevLateBinds = 0;
@@ -401,7 +408,22 @@ DWORD WINAPI BeatLoop(LPVOID)
             if (!g_off && g_idsReady && g_mgr && g_mgr->entries) {
                 EnterCriticalSection(&g_cs);
                 beatOurs = beatTheirs = beatLoaded = 0;
-                for (auto& ov : g_ovs) {
+                // The handle-match fast path below used to skip the name check entirely, so an
+                // index nobody else writes was never validated again after the claim. A slot the
+                // store has since re-pointed elsewhere then looks exactly like a healthy one for
+                // the rest of the session and the heartbeat counts it as held: "335 held, 0
+                // contested" reads the same whether the names still resolve here or not. Re-check
+                // a slice each beat, round robin, so every override is revalidated within a full
+                // sweep without putting a lookup per override per second under g_cs.
+                // ponytail: fixed 32 per beat, so a 6,000 file pack sweeps in about 3 minutes.
+                // Make it proportional if that ever needs to be faster.
+                const size_t revalBudget = 32;
+                const size_t ovCount = g_ovs.size();
+                const size_t revalFrom = ovCount ? revalCursor % ovCount : 0;
+                if (ovCount) revalCursor = (revalFrom + revalBudget) % ovCount;
+                for (size_t ovN = 0; ovN < ovCount; ++ovN) {
+                    Ov& ov = g_ovs[ovN];
+                    const bool sliceHit = inSweepSlice(ovN, ovCount, revalFrom, revalBudget);
                     if (ov.handle && ov.id == 0xFFFFFFFF) {
                         uint32_t appeared = targetStreamingId(ov.slot);
                         if (validStreamingId(appeared)) {
@@ -416,8 +438,13 @@ DWORD WINAPI BeatLoop(LPVOID)
                     for (uint32_t which : { ov.id, ov.altId }) {
                         if (which >= (uint32_t)g_mgr->numEntries) continue;
                         StrEntry& e = g_mgr->entries[which];
-                        bool loaded = (e.flags & 3) == 1;
+                        const uint32_t status = e.flags & 3;
+                        bool loaded = status == 1;
                         if (loaded) ++beatLoaded;
+                        // Whose file the game reads is settled when the load STARTS. Sample the
+                        // handle while the load is in flight, so a RECLAIM landing between the
+                        // load and the beat that notices it cannot be reported as our win.
+                        if (status >= 2 && !ov.loadedSeen) { ov.loadHandle = e.handle; ov.loadEdgeSeen = 1; }
                         // First time the game has this slot in memory: say whose file it read.
                         // A slot can be held all session and still show the game's texture if
                         // the load happened while the DLC mount owned the handle and refs then
@@ -427,44 +454,75 @@ DWORD WINAPI BeatLoop(LPVOID)
                             // The scan's cost audit reads page flags out of the file on disk, so it
                             // charges a drawable nothing for the texture dictionaries it shares.
                             // Now that the slot is resident the game can be asked what it really
-                            // took, dependencies included.
-                            uint64_t mem = slotMemoryCost(which);
-                            char cost[64] = "";
-                            if (mem) _snprintf_s(cost, _TRUNCATE, " (%.1f MB in memory with dependencies)", mem / 1048576.0);
-                            if (e.handle == ov.handle) LOG_DEBUG(LogCategory::Claim, "LOADED: %s from your file%s", ov.slot, cost);
-                            else LOG_WARN(LogCategory::Claim, "LOADED: %s from the GAME file (handle %08x)%s; your file shows only after the game drops and reloads it", ov.slot, e.handle, cost);
-                            if (mem >= (8ull << 20) && ++heavyInMemory <= 20)
-                                LOG_WARN(LogCategory::Audit, "  HEAVY IN MEMORY: %s really costs %.1f MB loaded (shrink it to fight texture loss)", ov.slot, mem / 1048576.0);
+                            // took. Texture memory is the physical figure; the virtual one is the
+                            // dependency walk. Reported apart because they are separate budgets.
+                            uint64_t memV = 0, memP = 0;
+                            slotMemoryCost(which, &memV, &memP);
+                            char cost[96] = "";
+                            if (memV || memP)
+                                _snprintf_s(cost, _TRUNCATE, " (%.1f MB texture, %.1f MB virtual with dependencies)", memP / 1048576.0, memV / 1048576.0);
+                            uint32_t readBy = ov.loadEdgeSeen ? ov.loadHandle : e.handle;
+                            // The game got there first. Holding the slot changes nothing while the
+                            // object stays resident, so hand it to the game thread to be dropped;
+                            // the next request for the name then comes through our handle.
+                            if (readBy != ov.handle && g_set.forceReload && !ov.dropQueued) {
+                                ov.dropQueued = 1;
+                                g_dropQ.push_back(DropReq{ which, ov.handle, ov.slot });
+                                InterlockedExchange(&g_dropPending, 1);
+                            }
+                            if (readBy != ov.handle)
+                                LOG_WARN(LogCategory::Claim, "LOADED: %s from the GAME file (handle %08x)%s; %s", ov.slot, readBy, cost,
+                                         g_set.forceReload ? "dropping it so the game reads yours instead"
+                                                           : "your file shows only after the game drops and reloads it");
+                            else if (ov.loadEdgeSeen || !ov.reclaimedEarly)
+                                LOG_DEBUG(LogCategory::Claim, "LOADED: %s from your file%s", ov.slot, cost);
+                            else
+                                LOG_WARN(LogCategory::Claim, "LOADED: %s holds your file now%s, but it was reclaimed before the load was seen, so the game may have read its own copy", ov.slot, cost);
+                            if (memP >= (8ull << 20) && ++heavyInMemory <= 20)
+                                LOG_WARN(LogCategory::Audit, "  HEAVY IN MEMORY: %s really costs %.1f MB of texture memory loaded (shrink it to fight texture loss)", ov.slot, memP / 1048576.0);
                         }
-                        if (e.handle == ov.handle) { ++beatOurs; continue; }
-                        // Somebody else wrote this slot. Before writing back, check the slot still
-                        // carries OUR name. FiveM frees a slot the server created once its resource
-                        // is gone (CfxCollection_RemoveStreamingTag sets handle 0, the unload before
-                        // a reconnect calls RemoveSlot), and the store hands that index to the next
+                        const bool ours = e.handle == ov.handle;
+                        // Before writing back, check the slot still carries OUR name. FiveM frees a
+                        // slot the server created once its resource is gone
+                        // (CfxCollection_RemoveStreamingTag sets handle 0, the unload before a
+                        // reconnect calls RemoveSlot), and the store hands that index to the next
                         // file registered. Our handle written into it would point a stranger's
                         // asset at our file. Only the index the NAME resolves to can be freed that
-                        // way: the extra index the claim minted in the aliased case never resolves
-                        // by name and is never freed, so it is exempt. A lookup that fails for a
-                        // reason other than "unknown name" says nothing about the slot; skip the
-                        // beat rather than guess.
-                        int why = SLOT_OK;
-                        uint32_t byName = targetStreamingId(ov.slot, &why);
-                        bool phantom = (which == ov.id && ov.altId != 0xFFFFFFFF);
-                        if (!phantom && byName != which) {
-                            if (why != SLOT_OK && why != SLOT_NO_NAME) continue;
-                            uint32_t& ref = (which == ov.altId) ? ov.altId : ov.id;
-                            ref = validStreamingId(byName) ? byName : 0xFFFFFFFF;
-                            if (++moved <= 60)
-                                LOG_INFO(LogCategory::Claim, "MOVED: %s no longer lives at id=%u (handle there %08x); %s", ov.slot, which, e.handle,
-                                         ref == 0xFFFFFFFF ? "name unknown, waiting for it to come back" : "following the name to its new id");
-                            continue;
+                        // way, so altId, which is deliberately the index the name has ALREADY moved
+                        // off, is exempt. A lookup that fails for a reason other than "unknown
+                        // name" says nothing about the slot; skip the beat rather than guess.
+                        // Checked whenever somebody else wrote the slot, and on the round robin
+                        // slice, because an untouched index needs validating too.
+                        const bool phantom = (which == ov.altId && ov.altId != ov.id);
+                        if (!phantom && (!ours || sliceHit)) {
+                            int why = SLOT_OK;
+                            uint32_t byName = targetStreamingId(ov.slot, &why);
+                            if (byName != which) {
+                                if (why != SLOT_OK && why != SLOT_NO_NAME) continue;
+                                uint32_t& ref = (which == ov.altId) ? ov.altId : ov.id;
+                                ref = validStreamingId(byName) ? byName : 0xFFFFFFFF;
+                                if (++moved <= 60)
+                                    LOG_INFO(LogCategory::Claim, "MOVED: %s no longer lives at id=%u (handle there %08x); %s", ov.slot, which, e.handle,
+                                             ref == 0xFFFFFFFF ? "name unknown, waiting for it to come back" : "following the name to its new id");
+                                continue;
+                            }
                         }
+                        if (ours) { ++beatOurs; continue; }
                         ++beatTheirs;
-                        if ((e.flags & 3) >= 2) { ++g_deferred; continue; }   // being requested/loaded right now; retry next tick
+                        if (status >= 2) { ++g_deferred; continue; }   // being requested/loaded right now; retry next tick
                         uint32_t old = e.handle;
                         e.handle = ov.handle;
+                        if (!ov.loadedSeen) ov.reclaimedEarly = 1;
+                        // Taking a slot back that is already resident is the same problem as the
+                        // LOADED case above: the handle is ours now, the pixels are still theirs.
+                        if (loaded && g_set.forceReload && !ov.dropQueued) {
+                            ov.dropQueued = 1;
+                            g_dropQ.push_back(DropReq{ which, ov.handle, ov.slot });
+                            InterlockedExchange(&g_dropPending, 1);
+                        }
                         if (++g_reclaims <= 60) LOG_INFO(LogCategory::Claim, "RECLAIM: %s (id=%u, %08x -> %08x)%s", ov.slot, which, old, ov.handle,
-                                                          loaded ? " - already in memory from the game file, applies after reload" : "");
+                                                          !loaded ? "" : (g_set.forceReload ? " - was in memory from the game file, dropping it to reload yours"
+                                                                                            : " - already in memory from the game file, applies after reload"));
                     }
                 }
                 LeaveCriticalSection(&g_cs);
@@ -486,12 +544,16 @@ DWORD WINAPI BeatLoop(LPVOID)
         prevLateBinds = g_lateBinds;
         prevTheirs = beatTheirs;
 
+        // "held" on its own was never the whole story: a slot can be held all session and still
+        // show the game's texture. Forced reloads say how often that had to be corrected.
+        char forced[48] = "";
+        if (g_forcedReloads) _snprintf_s(forced, _TRUNCATE, ", %ld forced reload(s)", g_forcedReloads);
         if (changed) {
-            LOG_INFO(LogCategory::Core, "Heartbeat (beat %d): %d held, %d contested, %ld reclaims (+%ld), %ld redirects (+%ld)",
-                     beat, beatOurs, beatTheirs, g_reclaims, dReclaims, (long)g_redirects, dRedirects);
+            LOG_INFO(LogCategory::Core, "Heartbeat (beat %d): %d held, %d contested, %ld reclaims (+%ld), %ld redirects (+%ld)%s",
+                     beat, beatOurs, beatTheirs, g_reclaims, dReclaims, (long)g_redirects, dRedirects, forced);
         } else if (beat % (g_minLogLevel == LogLevel::Debug ? 4 : 20) == 0 || beat == 1) {
-            LOG_INFO(LogCategory::Core, "Heartbeat (beat %d): %d held, %d contested, %d in memory, %ld redirects, %ld other server files",
-                     beat, beatOurs, beatTheirs, beatLoaded, (long)g_redirects, g_collOther);
+            LOG_INFO(LogCategory::Core, "Heartbeat (beat %d): %d held, %d contested, %d in memory, %ld redirects, %ld other server files%s",
+                     beat, beatOurs, beatTheirs, beatLoaded, (long)g_redirects, g_collOther, forced);
         }
     }
 }

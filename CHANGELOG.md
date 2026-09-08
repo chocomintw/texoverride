@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.8.24 (2026-09-08)
+
+- Your files now win a slot the game already filled. Claiming a name early was only ever half
+  the job: if the game loaded its own copy first, that copy stays in memory and nothing on screen
+  changes, which is why body skin, eye colour and some clothing textures could look untouched
+  while the log said everything was held. The plugin now drops the game's copy so yours is read
+  instead, and says `FORCED-RELOAD` when it does. This is why it matters: the same texture name
+  can live in four different game archives, and every one of them gets loaded while you start up.
+  Set `force_reload = no` in `_settings.txt` if you would rather it left loaded files alone.
+- The log was reporting the wrong half of what a loaded file costs. It measured system memory,
+  and texture pixels live in video memory, so every texture came back as 0.0 MB. A 16 MB body
+  skin looked free, and the "really costs" warning could never fire for a texture, which is the
+  one kind of file that texture loss is actually about. Both figures are read now and shown
+  separately.
+- The check for "does the game already own this name somewhere else" was made one step too late,
+  after the plugin had already claimed the name, so it could only ever answer no. On a 335 file
+  pack it had never once found anything. It is asked first now, and where the game does own the
+  name elsewhere, both entries are pinned, which is what the log line always said it did.
+- Every claimed slot is now re-checked in turn, a few dozen per second, instead of only the ones
+  something else wrote to. A slot nobody touched was never looked at again after startup, so if
+  the game moved that name to a different place the plugin went on reporting it as held for the
+  rest of the session.
+- The line that says whose file the game read now looks at the moment the game started reading,
+  not a second later. If the plugin took the slot back in between, the old line called that a win
+  when the game may well have read its own copy. When it cannot tell, it says so.
+
 ## 0.8.23 (2026-09-07)
 
 - The refresh key is gone. Pressing F11 read the folder again, but the watcher already does that

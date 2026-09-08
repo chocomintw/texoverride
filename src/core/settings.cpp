@@ -64,6 +64,16 @@ auto_update = no
 hide_overlay = no
 
 
+# Make your files win a slot the game already filled.
+#
+# The plugin claims the name before the game starts, but the game can still
+# get there first and load its own copy, and once something is in memory it
+# stays. Body skin, eye colour and some clothing textures do this. Turning
+# this off is safe but those files may then look unchanged until you
+# restart FiveM.
+force_reload = yes
+
+
 # Never check whether a new version is out.
 # Normally the plugin asks GitHub for the newest version number when it starts.
 # Turning this on stops that, and then it never uses the internet at all.
@@ -205,6 +215,7 @@ void loadSettings()
         else if (k == "no_update_check") g_set.noUpdateCheck = g_set.noUpdateCheck || truthy(v);
         else if (k == "texture_budget" && g_set.budget.empty()) g_set.budget = v;
         else if (k == "hide_overlay") g_set.hideOverlay = v;
+        else if (k == "force_reload") g_set.forceReload = truthy(v);
     }
     fclose(f);
 }
