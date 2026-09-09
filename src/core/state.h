@@ -43,7 +43,6 @@ extern long g_lateBinds;
 // collection map: root files shown / counted only. Incremented under g_cs by the hook thread,
 // read unlocked by the beat thread for the heartbeat, hence volatile: display only, and an
 // aligned long cannot tear on x86-64.
-extern long g_collListed;
 extern volatile long g_collOther;
 extern bool g_didRegister;
 extern bool g_b1;
@@ -75,7 +74,6 @@ extern PeekMsg_t g_origPeek;
 extern DWORD g_pumpTid;
 extern bool g_pumpReady;   // a main-thread pump is live, whichever of the two it is
 extern bool g_framePumpConnected;   // connected to FiveM's OnMainGameFrame in Setup()
-extern HANDLE g_refreshEvent;   // set by the refresh key, waited on by the watcher thread
 extern std::unordered_map<std::string, Snap> g_snap;
 
 extern uint64_t* g_vramTable;

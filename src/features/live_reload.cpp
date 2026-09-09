@@ -133,7 +133,10 @@ void drainOps()   // runs on the game's main thread
             }
         } else {
             if (g_getRawStreamerFn && g_rawGetEntryFn && rawInvalidate(op.handle))
-                LOG_INFO(LogCategory::Live, "LIVE-UPDATE: %s reread from disk (reapply outfit/tattoo to see it)", op.ov.slot);
+                // Honest about the ceiling: re-statting the entry points it at the new bytes, so
+                // the next STREAM IN reads them. It cannot touch what the game already holds in
+                // memory, and taking the item off and putting it back does not force a reload.
+                LOG_INFO(LogCategory::Live, "LIVE-UPDATE: %s reread from disk (the game keeps the copy it already loaded until you restart)", op.ov.slot);
             else
                 LOG_WARN(LogCategory::Live, "Live reload: %s changed, could not refresh it, restart to apply", op.ov.slot);
             free((void*)op.ov.slot);
@@ -164,36 +167,6 @@ BOOL WINAPI h_peekMsg(LPMSG m, HWND w, UINT a, UINT b, UINT r)
     return g_origPeek(m, w, a, b, r);
 }
 
-// ============================== the refresh key ==============================
-// The watcher notices changes on its own, but only when Windows tells it to, and a watcher that
-// misses an event looks exactly like a plugin that does not work. This is the manual version, and
-// the SA modloader habit: press a key and the folder is read again right now.
-//
-static int  g_refreshVk = 0;
-static bool g_refreshHeld = false;
-
-static void refreshKeyTick()
-{
-    if (g_refreshVk <= 0 || !g_refreshEvent) return;
-    // The edge comes off the RAW key state, never off the foreground test. Folding the two
-    // together (0.8.13 dev) made a press that arrived while something else owned the foreground
-    // look identical to a press the plugin never saw, which is exactly what one dropped F11
-    // looked like in testing. Now a rejected press says so.
-    bool down = (GetAsyncKeyState(g_refreshVk) & 0x8000) != 0;
-    if (down && !g_refreshHeld) {
-        DWORD pid = 0;
-        GetWindowThreadProcessId(GetForegroundWindow(), &pid);
-        if (pid == GetCurrentProcessId()) {
-            LOG_DEV(LogCategory::Live, "refresh key vk=0x%02X pressed", g_refreshVk);
-            SetEvent(g_refreshEvent);   // on the press, not every frame it is held
-        }
-        else
-            LOG_DEV(LogCategory::Live, "refresh key vk=0x%02X ignored: foreground window is pid %lu, we are %lu",
-                    g_refreshVk, (unsigned long)pid, (unsigned long)GetCurrentProcessId());
-    }
-    g_refreshHeld = down;
-}
-
 // Everything the plugin does on the game's main thread, from whichever of the two pumps is live.
 void framePumpTick()
 {
@@ -207,7 +180,6 @@ void framePumpTick()
     if (nowMs >= devNext) { LOG_DEV(LogCategory::Live, "frame pump: %ld tick(s) in the last 10s", devTicks); devTicks = 0; devNext = nowMs + 10000; }
 #endif
     if (g_opsPending) drainOps();
-    refreshKeyTick();
     shotKeyTick();
     // Once a second, on the game's own thread. grcResourceCache::GetInstance is a jump straight
     // into GTA5.exe, and the plugin's standing rule for calls into game code is that they run
@@ -367,6 +339,13 @@ void rescanTree(const std::string& base, const std::string& sub, bool quiet, std
             else
                 batch.push_back({ 1, { _strdup(key.c_str()), nullptr }, handle });
         }
+        else if (isNew && !quiet) {
+            // A brand new file whose slot is already taken is a second copy of something already
+            // loaded, usually an _override pack copied in mid-session. Which copy wins is decided
+            // by the startup scan, so this one does nothing until the next launch. Silence here
+            // is indistinguishable from a plugin that did not notice the file at all.
+            LOG_INFO(LogCategory::Live, "Live reload: %s is already loaded from another folder; restart FiveM to use this copy", key.c_str());
+        }
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 }
@@ -377,11 +356,6 @@ DWORD WINAPI WatchLoop(LPVOID)
     HANDLE h = FindFirstChangeNotificationA(dir.c_str(), TRUE,
         FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE);
     if (h == INVALID_HANDLE_VALUE) { LOG_ERROR(LogCategory::Live, "Live reload: cannot watch tex_overrides (err %lu) — restart to apply changes", GetLastError()); return 0; }
-
-    // Armed before either pump is connected, so the very first frame that runs already has a
-    // key to look at and an event to signal.
-    g_refreshVk = vkFromName(g_set.refreshKey);
-    if (g_refreshVk > 0) g_refreshEvent = CreateEventA(nullptr, FALSE, FALSE, nullptr);
 
     // The frame event was subscribed back in Setup(), on the loader thread. Only the fallback
     // is left to decide here, and it patches an import, so it stays where it always was.
@@ -394,40 +368,17 @@ DWORD WINAPI WatchLoop(LPVOID)
              !g_pumpReady   ? "edits only: new files need restart"
              : viaEvent     ? "full: edits and new files, on FiveM's own frame event"
                             : "full: edits and new files, via the message pump");
-    if (g_refreshVk > 0 && g_refreshEvent) {
-        std::string kn = g_set.refreshKey;
-        for (auto& c : kn) c = (char)toupper((unsigned char)c);
-        LOG_INFO(LogCategory::Live, "Refresh key: press %s in game to read tex_overrides again straight away (refresh_key in _settings.txt)", kn.c_str());
-    }
-    else if (g_refreshVk < 0)
-        LOG_WARN(LogCategory::Live, "refresh_key in _settings.txt is \"%s\", which is not a key I know (use f1 to f12, a letter, a digit, or off); refresh key disabled",
-                 g_set.refreshKey.c_str());
-
-    HANDLE waits[2] = { h, g_refreshEvent };
-    const DWORD nWaits = g_refreshEvent ? 2 : 1;
     for (;;) {
-        DWORD w = WaitForMultipleObjects(nWaits, waits, FALSE, g_journalClearAt ? 1000 : INFINITE);
+        DWORD w = WaitForSingleObject(h, g_journalClearAt ? 1000 : INFINITE);
         if (g_journalClearAt && GetTickCount64() >= g_journalClearAt && !g_opsPending) {
             DeleteFileA(g_inflightPath);   // survived the risky window; nothing to quarantine
             g_journalClearAt = 0;
         }
         if (w == WAIT_TIMEOUT) continue;
-        bool manual = (w == WAIT_OBJECT_0 + 1);
-        if (w != WAIT_OBJECT_0 && !manual) break;
-        // Only the folder notification needs re-arming and settling. A key press is already the
-        // user saying they have finished copying, so it reads the folder immediately.
-        if (!manual)
-            do { FindNextChangeNotification(h); } while (WaitForSingleObject(h, 500) == WAIT_OBJECT_0);   // debounce until quiet
+        if (w != WAIT_OBJECT_0) break;
+        do { FindNextChangeNotification(h); } while (WaitForSingleObject(h, 500) == WAIT_OBJECT_0);   // debounce until quiet
         std::vector<std::string> xmls; std::vector<LiveOp> batch;
         rescanTree(g_overrideDir, "", false, xmls, batch);
-        // A key press with nothing to report still has to say so, or it is indistinguishable
-        // from a key that does not work at all.
-        if (manual) {
-            if (batch.empty() && xmls.empty())
-                LOG_INFO(LogCategory::Live, "Refresh key: nothing has changed since the last look");
-            else
-                LOG_INFO(LogCategory::Live, "Refresh key: %zu file change(s), %zu placement file(s)", batch.size(), xmls.size());
-        }
         if (!batch.empty()) submitBatch(batch);
         if (!xmls.empty()) {
             std::vector<PlColl> fresh;

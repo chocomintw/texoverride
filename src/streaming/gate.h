@@ -13,6 +13,8 @@ bool isAllowedKey(const std::string& key);
 bool isIgnoredType(const std::string& ln, const std::string& rel, bool announce);
 // A folder named disabled* (any case) is skipped whole by both scans; rename to switch a pack.
 bool isDisabledFolder(const std::string& name);
+// A folder named *_override anywhere in the path: its copy of a file beats every other copy.
+bool isOverridePath(const std::string& rel);
 
 // The streaming key a file registers under, from its path inside tex_overrides (forward
 // slashes, lowercase). The collection is the file's own parent folder; any folders above it

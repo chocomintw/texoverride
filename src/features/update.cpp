@@ -17,7 +17,9 @@
 // Queries GitHub releases for the latest version tag and asset. If a newer release exists,
 // it can download texoverride.asi directly, verify the PE binary, and swap it into place
 // so it applies on the next FiveM restart.
-// Fails silently when offline. Skipped when _OFF or _NO_UPDATE_CHECK exists in tex_overrides.
+// Fails silently when offline. Skipped only when the plugin is off. Since 0.8.26 there is no
+// way to silence it: a new version always produces a message box, whether it was installed on
+// its own (auto_update = yes) or is being offered.
 // Runs on its own thread so popups/network calls never block the streaming engine.
 
 int verCmp(const char* a, const char* b)   // >0 when a is newer than b
@@ -326,7 +328,6 @@ static bool installUpdate(const std::string& downloadUrl, const std::string& lat
 DWORD WINAPI UpdateCheck(LPVOID)
 {
     if (g_off) return 0;
-    if (g_set.noUpdateCheck) return 0;
 
     std::string body;
     HINTERNET s = WinHttpOpen(L"texoverride", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -424,7 +425,7 @@ DWORD WINAPI UpdateCheck(LPVOID)
                 "- Yes: Download and install automatically\n"
                 "- No: Open the release page in your browser\n"
                 "- Cancel: Skip for now\n\n"
-                "To turn this check off, create _NO_UPDATE_CHECK in tex_overrides.",
+                "Set auto_update = yes in tex_overrides\\_settings.txt to install new versions without asking.",
                 latest.c_str());
             int choice = MessageBoxA(nullptr, msg, "texoverride update",
                                      MB_YESNOCANCEL | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST);
@@ -441,28 +442,26 @@ DWORD WINAPI UpdateCheck(LPVOID)
         }
 
         if (shouldInstall) {
+            // Both outcomes are announced whichever way the install was decided. An update that
+            // lands in silence is how "I never turned updates on" reports start.
             if (installUpdate(downloadUrl, latest, expectHash)) {
-                if (!autoUpdate) {
-                    char doneMsg[256];
-                    _snprintf_s(doneMsg, sizeof doneMsg, _TRUNCATE,
-                        "texoverride %s has been installed!\n\n"
-                        "It will take effect the next time you start FiveM.",
-                        latest.c_str());
-                    MessageBoxA(nullptr, doneMsg, "texoverride update",
-                                MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST);
-                }
+                char doneMsg[320];
+                _snprintf_s(doneMsg, sizeof doneMsg, _TRUNCATE,
+                    "texoverride %s has been installed%s.\n\n"
+                    "It will take effect the next time you start FiveM. The version you had is kept beside it as texoverride.asi.old.",
+                    latest.c_str(), autoUpdate ? " (auto_update is on in _settings.txt)" : "");
+                MessageBoxA(nullptr, doneMsg, "texoverride update",
+                            MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST);
             } else {
-                if (!autoUpdate) {
-                    char failMsg[320];
-                    _snprintf_s(failMsg, sizeof failMsg, _TRUNCATE,
-                        "Failed to install texoverride %s automatically (see texoverride.log for details).\n\n"
-                        "Would you like to open the release page in your browser instead?",
-                        latest.c_str());
-                    if (MessageBoxA(nullptr, failMsg, "texoverride update",
-                                    MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST) == IDYES) {
-                        ShellExecuteA(nullptr, "open", "https://github.com/blancodagoat/texoverride/releases",
-                                      nullptr, nullptr, SW_SHOWNORMAL);
-                    }
+                char failMsg[320];
+                _snprintf_s(failMsg, sizeof failMsg, _TRUNCATE,
+                    "Failed to install texoverride %s automatically (see texoverride.log for details).\n\n"
+                    "Would you like to open the release page in your browser instead?",
+                    latest.c_str());
+                if (MessageBoxA(nullptr, failMsg, "texoverride update",
+                                MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST) == IDYES) {
+                    ShellExecuteA(nullptr, "open", "https://github.com/blancodagoat/texoverride/releases",
+                                  nullptr, nullptr, SW_SHOWNORMAL);
                 }
             }
         }

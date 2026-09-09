@@ -10,16 +10,15 @@
 // without .txt) are still READ, but only once: the first launch that finds one folds its value
 // into _settings.txt and deletes it. So an install converges on exactly one settings file and
 // nothing else, and nobody ever has to be told to rename anything.
+//
+// Gone since 0.8.26, and stripped out of existing files: debug (the log always carries DEBUG
+// detail), no_update_check (the check always runs and always says what it found) and
+// force_reload (it dropped resident objects the game was still drawing, which crashed the game).
 struct Settings
 {
     bool off            = false;
-    bool debug          = false;
     bool autoUpdate     = false;
-    bool noUpdateCheck  = false;
     std::string budget;   // raw value; resolved in readBudgetFile, which can actually log
-    // Default lives here rather than only in the file text, so the installs that already have a
-    // _settings.txt (which is never rewritten) get the key without having to add a line.
-    std::string refreshKey = "f11";
     std::string hideOverlay;   // comma separated screenshot keys, or "always"; empty = leave FiveM's overlays alone
 };
 

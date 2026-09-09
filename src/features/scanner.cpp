@@ -10,8 +10,9 @@
 #include <unordered_map>
 
 // The walk itself opens nothing: it only decides which names are ours.
-// One key can only be provided once; two packs shipping the same file keep the first one seen.
-static std::unordered_set<std::string> g_seenKeys;
+// One key can only be provided once. Two packs shipping the same file keep the first one seen,
+// unless the later one sits under an *_override folder, which is the user saying which copy wins.
+static std::unordered_map<std::string, size_t> g_seenKeys;   // key -> where it sits in out
 
 void walkDir(const std::string& base, const std::string& rel, std::vector<Cand>& out)
 {
@@ -39,12 +40,23 @@ void walkDir(const std::string& base, const std::string& rel, std::vector<Cand>&
             LOG_WARN(LogCategory::Scan, "SKIP %s - %s", relStr.c_str(), why ? why : "refused");
             continue;
         }
-        if (!g_seenKeys.insert(slotStr).second) {
-            LOG_WARN(LogCategory::Scan, "DUPLICATE %s - %s provides the same file as one already listed; this copy is ignored", slotStr.c_str(), relStr.c_str());
+        bool prio = isOverridePath(relStr);           // *_override folder: this copy wins
+        auto seen = g_seenKeys.find(slotStr);
+        if (seen != g_seenKeys.end()) {
+            Cand& held = out[seen->second];
+            if (prio && !held.prio) {
+                LOG_INFO(LogCategory::Scan, "PREFERRED %s - %s takes the slot from %s", slotStr.c_str(), relStr.c_str(), ::rel(held.full.c_str()));
+                held.full = fwd(base + childRel);
+                held.prio = true;
+            } else {
+                LOG_WARN(LogCategory::Scan, "DUPLICATE %s - %s provides the same file as one already listed; this copy is ignored%s",
+                         slotStr.c_str(), relStr.c_str(), prio && held.prio ? " (another _override folder got there first)" : "");
+            }
             continue;
         }
         if (g_quarantine.count(slotStr)) continue;   // crash saver; already logged loudly
-        out.push_back({ slotStr, fwd(base + childRel), Cost() });
+        g_seenKeys[slotStr] = out.size();
+        out.push_back({ slotStr, fwd(base + childRel), Cost(), prio });
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 }
@@ -109,6 +121,24 @@ void scanFinish()
             else if (kv.first == "ymt" || kv.first == "ydd") typeDesc = "Animal models/meta";
             LOG_INFO(LogCategory::Scan, "    %-38s %3d file(s)", typeDesc, kv.second);
         }
+    }
+
+    // Body skin and face overlays are the one family where a slot claim is provably not enough.
+    // Verified in game on b3751, 2026-09-08: the claim takes the real slot, the game loads the
+    // user file from it, the log says "from your file", and the ped still draws stock. The ped
+    // builds its face and body out of these before anything reachable from the streaming slot.
+    // Say so at scan time, because the log otherwise reads perfectly while nothing changes, and
+    // that costs somebody a whole evening before they think to doubt it.
+    {
+        static const char* kUnreachable[] = { "mp_fm_skin_", "mp_fm_faov_", "ng_hip_faov_", "mp_eye_colour" };
+        int n = 0;
+        for (auto& ov : g_ovs) {
+            if (strchr(ov.slot, 0x2F)) continue;            // root keys only
+            for (const char* pre : kUnreachable)
+                if (_strnicmp(ov.slot, pre, strlen(pre)) == 0) { ++n; break; }
+        }
+        if (n)
+            LOG_WARN(LogCategory::Scan, "  %d body skin / face overlay file(s) here (mp_fm_skin_*, mp_fm_faov_*, ng_hip_faov_*, mp_eye_colour). These CANNOT be replaced from tex_overrides: the slot claim works and the log will say your file loaded, but the ped is built from these earlier and keeps the stock look. Ship them in a FiveM mods folder package instead. Head models and head textures in a collection folder are unaffected.", n);
     }
 
     costReport();

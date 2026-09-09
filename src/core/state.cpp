@@ -20,7 +20,9 @@ uint64_t g_costVirt = 0;
 uint64_t g_costPhys = 0;
 std::vector<std::pair<uint64_t, std::string>> g_costBig;
 
-LogLevel g_minLogLevel = LogLevel::Info;
+// Always DEBUG since 0.8.26. The log is a support tool, and "turn debug on and send it again"
+// cost a round trip on every single report.
+LogLevel g_minLogLevel = LogLevel::Debug;
 CRITICAL_SECTION g_logCs;
 bool g_logCsInit = false;
 
@@ -32,7 +34,6 @@ volatile LONG g_firstLoadDone = 0;
 long g_reclaims = 0;
 long g_deferred = 0;
 long g_lateBinds = 0;
-long g_collListed = 0;
 volatile long g_collOther = 0;
 bool g_didRegister = false;
 bool g_b1 = true;
@@ -64,7 +65,6 @@ PeekMsg_t g_origPeek = nullptr;
 DWORD g_pumpTid = 0;
 bool g_pumpReady = false;
 bool g_framePumpConnected = false;
-HANDLE g_refreshEvent = nullptr;
 std::unordered_map<std::string, Snap> g_snap;
 
 uint64_t* g_vramTable = nullptr;

@@ -91,6 +91,15 @@ in directly has to be the collection name. Weapons, props, animations and tattoo
 in folders too. If two packs contain the same file, the first one found is used and the log says
 `DUPLICATE` for the other.
 
+To pick which pack wins those clashes, put `_override` at the end of its folder name. A file in
+`feseropack_override/` beats the same file in any ordinary folder, whatever order the folders are
+read in, and the log says `PREFERRED` on that line. This is for keeping a big pack whole and
+stacking your own edits on top of it, the same idea as a loose folder overriding an installed pack
+on RAGE MP. It works on a collection folder as well, so `mp_m_freemode_01_override/uppr_013_r.ydd`
+still loads as part of `mp_m_freemode_01`. Two `_override` folders holding the same file are back
+to first one found. Which copy wins is decided when the game starts, so restart FiveM after adding
+an `_override` pack.
+
 To switch a pack off without deleting it, put `disabled` at the front of its folder name:
 `disabledPack1` is skipped whole, `Pack2` next to it still loads. Rename it back to turn it on
 again. Files already showing in game stay until you restart, so restart FiveM after renaming.
@@ -99,12 +108,29 @@ again. Files already showing in game stay until you restart, so restart FiveM af
 |------|---------------|------------|
 | Clothes | a subfolder, such as `mp_m_freemode_01/` | `.ydd` `.ytd` |
 | Animals | a subfolder, such as `a_c_husky/` | `.ydd` `.ytd` `.ymt` |
-| Tattoos, skin, face paint, beards | straight in | `.ytd` |
+| Tattoos | straight in | `.ytd` |
 | Where a tattoo sits, and how big it is | straight in | `.xml` |
 | Animations | straight in | `.ycd` |
 | Firearms | straight in | `.ydr` `.ytd` |
 | Props | straight in | `.ydr` `.yft` `.ytd` |
 | Vehicles | straight in | `.yft` `.ydr` `.ytd` |
+
+### What this plugin cannot do: body skin and face overlays
+
+These do not work through `tex_overrides`, and putting them there does nothing useful:
+
+- `mp_fm_skin_*` (body skin, both genders, every tone)
+- `mp_fm_faov_*` and `ng_hip_faov_*` (beards, eyebrows, lips, moles, freckles)
+- `mp_eye_colour.ytd`
+
+The plugin claims their names, wins the slot, and the game loads your file from it. The log says
+so and it is telling the truth. The ped still draws the stock texture, because the ped builds its
+face and body out of these before anything a streaming slot claim can reach. Confirmed in game on
+b3751, 2026-09-08, after the slot claim was proved correct.
+
+Put these in a FiveM mods folder package instead. Head models and head textures
+(`head_000_r.ydd`, `head_diff_000_a_whi.ytd`) are components inside a collection folder and do
+work through `tex_overrides` normally.
 
 **[Step by step for each of these, with examples](docs/replacing-files.md)**
 
@@ -116,16 +142,11 @@ folder while you play and reacts on its own when something in it changes.
 - Save an edited `overlays.xml` and the tattoo moves on your ped within a second or two. This
   makes tuning easy: nudge a number, save, look, repeat.
 - Overwrite a `.ytd` or `.ydd` the plugin already uses and the file is read again straight away.
-  Whether you SEE it without restarting depends on the game, not on the plugin. If the game still
-  has the old version loaded in memory, it keeps drawing that, and taking the item off and putting
-  it back on does not always force a fresh read. When that happens, restart FiveM. Editing a file
-  the game has not loaded yet is the case that works reliably.
+  You will not SEE the change until you restart, and that is the game, not the plugin. Once the
+  game has loaded a file it holds on to it, and nothing reaches in and swaps it: taking the item
+  off and putting it back on does not force a fresh read. Editing a file the game has not loaded
+  yet is the case that shows up without a restart.
 - Drop in a file with a name nothing else uses and it is picked up right away.
-- Do not want to wait? Press **F11** in game and the folder is read again straight away. It only
-  works while the game window is focused, and it always writes a line in the log, even when
-  nothing has changed, so a key that finds nothing never looks like a key that is broken. To use
-  a different key, set `refresh_key` in `_settings.txt` to any `f1` to `f12` key, a letter, a
-  digit, or `off`.
 
 The one thing that cannot happen live is taking over a name the server or a DLC has already
 loaded. Once the game holds a name it will not hand it over until it restarts, so the log says so
@@ -174,8 +195,8 @@ The version you had stays beside the new one as `texoverride.asi.old`. If the ne
 you trouble, delete `texoverride.asi` and rename the `.old` file back to `texoverride.asi`.
 
 To make updates install automatically without asking, set `auto_update = yes` in
-`_settings.txt`. To turn the check off completely, set `no_update_check = yes`. See Settings
-below.
+`_settings.txt`. You still get a message saying what was installed, so an update never lands
+without you knowing. The check itself cannot be turned off. See Settings below.
 
 That is the plugin's only network use. It sends nothing about you, your game or your files, and if you are
 offline it quietly does nothing.
@@ -198,10 +219,10 @@ it in Notepad. Every option is listed, switched off, and explained where it sits
 save, restart FiveM.
 
 ```
-# Write extra detail into texoverride.log.
-# Turn this on when someone is helping you work out a problem, and turn it off
-# again afterwards. It makes the log a lot longer.
-debug = no
+# Install new versions on their own, without asking you first.
+# The plugin always checks for a new version when it starts and always tells
+# you when one is out. This only decides whether it asks before installing.
+auto_update = no
 ```
 
 That is the whole thing. `no` becomes `yes` and the option is on. Lines starting with `#` are
@@ -210,14 +231,16 @@ notes and the plugin skips them.
 | Option | What it does |
 |--------|--------------|
 | `off` | Plugin stays installed but does nothing at all |
-| `debug` | Adds `DEBUG` detail to the log |
 | `texture_budget` | `auto`, `game`, or a number of GB |
 | `auto_update` | Installs new versions without asking |
-| `no_update_check` | Never checks whether a new version is out |
-| `refresh_key` | Which key reads the folder again, `f1` to `f12`, a letter, a digit, or `off` |
 | `hide_overlay` | Keys that take FiveM's corner text off the screen for a moment (`printscreen`, `f1` to `f12`, a letter, a digit), or `always` |
 
 `yes`, `on`, `true` and `1` all mean on. Anything else means off. Capital letters do not matter.
+
+The log always carries full `DEBUG` detail, so there is nothing to switch on before you send it
+to someone. Three older options are gone and the plugin removes their lines from your file on
+the next start: `debug` (always on now), `no_update_check` (the check always runs) and
+`force_reload` (it made the game crash, see the 0.8.26 changelog).
 
 The file is only ever created, never rewritten, so your changes and any notes you add to it
 survive every update. Delete it and you get a fresh one with everything off.

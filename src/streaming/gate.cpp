@@ -190,6 +190,17 @@ bool isDisabledFolder(const std::string& name)
     return lower(name).rfind("disabled", 0) == 0;
 }
 
+// A folder whose name ends in "_override" wins a duplicate. Two packs shipping the same file used
+// to mean "whichever copy the folder walk reached first", which is not something a user can steer;
+// now the copy under an _override folder is the one that loads, wherever it sits in the walk. The
+// suffix is also stripped off a collection folder, so mp_m_freemode_01_override/feet_007_u.ydd
+// still registers as mp_m_freemode_01/feet_007_u.ydd instead of inventing a collection that
+// nothing streams. Only folders carry it: a file called anything_override.ytd is just a file.
+bool isOverridePath(const std::string& rel)   // lowercase, forward slashes, ends in the file name
+{
+    return rel.find("_override/") != std::string::npos;
+}
+
 // One rule for both the startup scan and live reload, so a nested folder means the same thing
 // on both paths. Flat layouts produce exactly the keys they always did.
 std::string slotKeyFor(const std::string& rel, const char** why)
@@ -201,6 +212,8 @@ std::string slotKeyFor(const std::string& rel, const char** why)
     if (cut != std::string::npos) {
         size_t cut2 = rel.rfind('/', cut - 1);
         parent = cut2 == std::string::npos ? rel.substr(0, cut) : rel.substr(cut2 + 1, cut - cut2 - 1);
+        if (parent.size() > 9 && parent.compare(parent.size() - 9, 9, "_override") == 0)
+            parent.resize(parent.size() - 9);   // mp_m_freemode_01_override/ IS mp_m_freemode_01/
     }
     bool slotted = hasExt(file, ".ydd") || hasExt(file, ".ytd");
     if (slotted && !parent.empty()) {

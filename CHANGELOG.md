@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.8.26 (2026-09-09)
+
+- Fixes the crash 0.8.25 caused on busy servers: `ERR_GEN_PAGE_1` at `GTA5_b3751.exe+13EC17E`,
+  a few minutes into a session. The cause was `force_reload`, added in 0.8.24 and widened in
+  0.8.25. Once claims started landing on the game's real slots, it began dropping clothing and
+  animation files out of memory while a ped was still using them, which is the one thing a plugin
+  must never do to the game. It had never done anything useful in any log before that either. It
+  is gone, the plugin never frees anything the game has loaded any more, and the line is removed
+  from your `_settings.txt` on the next start. The real-slot fix from 0.8.25 stays.
+- The log always carries full `DEBUG` detail now. The `debug` option is gone and its line is
+  removed from your settings file. Nobody has to be told to turn it on and send the log again.
+- Update messages always appear. The `no_update_check` option is gone. A new version always
+  produces a message, whether the plugin installed it on its own because `auto_update` is on or
+  is asking you first. Before this, with `auto_update = yes`, an update landed in silence, which
+  is how "I never turned updates on" reports start.
+- The 500 line cap on the list of overridable server files is gone. It only ever existed to be
+  lifted by `debug`.
+
+## 0.8.25 (2026-09-08)
+
+- Your files were being registered into slots the game never reads. This is the big one, and it
+  affected every file in every version so far. The plugin claims a name on the first file the
+  game streams, but at that moment the game cannot answer "what does this name point at yet",
+  so the claim invented a brand new slot instead of taking over the real one. Your file loaded,
+  the log said it was held, and the game carried on reading its own copy. The plugin now waits
+  for the game to be ready to answer before it claims anything. On one real pack this turned
+  758 invented slots into 220 real takeovers.
+- Added support for game build 3889 (The Kortz Center Heist) and 3323. Without a line for the
+  build you are on, FiveM refuses the plugin and writes no log at all.
+- Body skin and face overlays cannot be replaced from tex_overrides, and the log now says so at
+  startup instead of letting you find out the hard way. Files named `mp_fm_skin_*`,
+  `mp_fm_faov_*`, `ng_hip_faov_*` and `mp_eye_colour` get claimed, get loaded, and still do not
+  show, because your ped is built from them earlier than any of this reaches. Those belong in a
+  FiveM mods folder package. Head models and head textures in a collection folder are not
+  affected and keep working normally.
+- Dropping the game copy of a file now also happens when the plugin had to take the slot back
+  before it saw the file load. That case was slipping through, so a file could sit there held
+  by us and still show the stock version.
+- The log no longer tells you to switch on `debug` in a line that only prints when `debug` is
+  already on.
+## 0.8.24 (2026-09-08)
+
+- Your files now win a slot the game already filled. Claiming a name early was only ever half
+  the job: if the game loaded its own copy first, that copy stays in memory and nothing on screen
+  changes, which is why body skin, eye colour and some clothing textures could look untouched
+  while the log said everything was held. The plugin now drops the game's copy so yours is read
+  instead, and says `FORCED-RELOAD` when it does. This is why it matters: the same texture name
+  can live in four different game archives, and every one of them gets loaded while you start up.
+  Set `force_reload = no` in `_settings.txt` if you would rather it left loaded files alone.
+- The log was reporting the wrong half of what a loaded file costs. It measured system memory,
+  and texture pixels live in video memory, so every texture came back as 0.0 MB. A 16 MB body
+  skin looked free, and the "really costs" warning could never fire for a texture, which is the
+  one kind of file that texture loss is actually about. Both figures are read now and shown
+  separately.
+- The check for "does the game already own this name somewhere else" was made one step too late,
+  after the plugin had already claimed the name, so it could only ever answer no. On a 335 file
+  pack it had never once found anything. It is asked first now, and where the game does own the
+  name elsewhere, both entries are pinned, which is what the log line always said it did.
+- Every claimed slot is now re-checked in turn, a few dozen per second, instead of only the ones
+  something else wrote to. A slot nobody touched was never looked at again after startup, so if
+  the game moved that name to a different place the plugin went on reporting it as held for the
+  rest of the session.
+- The line that says whose file the game read now looks at the moment the game started reading,
+  not a second later. If the plugin took the slot back in between, the old line called that a win
+  when the game may well have read its own copy. When it cannot tell, it says so.
+
+## 0.8.23 (2026-09-07)
+
+- The refresh key is gone. Pressing F11 read the folder again, but the watcher already does that
+  on its own the moment a file changes, so the key had nothing left to find and looked broken.
+  What no key can do is make the game draw the new file: once the game has loaded something it
+  holds on to it until you restart.
+- The plugin takes the old `refresh_key` line out of your `_settings.txt` on the next start, along
+  with the note above it, so the file stops describing a setting that is not there. Everything
+  else in the file is left exactly as you wrote it.
+
+## 0.8.22 (2026-09-06)
+
+- Put `_override` at the end of a folder name and the files inside it win against the same file
+  in any other folder. Keep a big pack whole in `feseroclothingpack/` and put your own edited
+  copies in `feseropack_override/`, and yours are the ones that load. Before this the winner was
+  whichever folder Windows handed over first, which nobody could steer. The log says `PREFERRED`
+  on the line where a file takes a slot off another copy.
+- The suffix works on a collection folder too, so `mp_m_freemode_01_override/uppr_013_r.ydd`
+  still loads as part of `mp_m_freemode_01`. Two `_override` folders holding the same file are
+  back to first one found, and the log still says `DUPLICATE`.
+- Which copy wins is worked out when the game starts. Copy an `_override` pack in while you are
+  playing and the log now tells you it needs a restart, instead of saying nothing at all.
+
 ## 0.8.21 (2026-09-03)
 
 - `hide_overlay = always` no longer cuts DUI screens in half. A player found that with the

@@ -43,30 +43,64 @@ void resolveOccupiedSlotExports()
             "?GetPgRawStreamerEntries@rage@@YAAEBU?$chunkyArray@URawEntry@fiCollection@rage@@$0EAA@$0EA@@1@XZ");
 }
 
-// What a loaded slot really costs, dependencies included. The cost audit at scan time can only
-// read the RSC7 page flags out of the file on disk, which is the file's own size and nothing
-// more; a clothing .ydd that drags three shared texture dictionaries in with it is charged for
-// none of them there. FiveM's own devtools walks the dependency tree and adds it all up, and
-// exports the walk, so once a slot is resident the honest figure is one call away.
+// What a loaded slot really costs. The cost audit at scan time can only read the RSC7 page flags
+// out of the file on disk, which is the file's own size and nothing more; a clothing .ydd that
+// drags three shared texture dictionaries in with it is charged for none of them there. FiveM's
+// devtools exports a walk of the dependency tree, so once a slot is resident a better figure is
+// one call away.
+//
+// It only walks HALF of it, and that is not obvious from the name. Disassembled at
+// devtools-five+0x332A0: CountDependencyMemory seeds its accumulator from
+// gta-streaming-five!StreamingDataEntry::ComputeVirtualSize and then recurses over
+// GetDependencies adding more of the same. Virtual is system memory. Texture pixels live in
+// PHYSICAL memory, so every texture dictionary came back as ~0 and the HEAVY IN MEMORY warning
+// below could never once fire for a .ytd, which is the file type every texture-loss report is
+// actually about: mp_fm_skin_f_up_whi.ytd audits at 16.0 MB from its page flags and reported
+// 0.0 MB loaded. ComputePhysicalSize is exported beside it, same this-is-the-entry calling
+// shape, so ask for both and report them apart the way the scan audit already does.
+//
+// ponytail: physical is the entry's OWN pages; the dependency recursion is virtual-only because
+// GetDependencies sits behind a build-dependent vtable offset we do not have a pattern for. A
+// .ytd is exact (it has no dependencies), a drawable is charged for its own vertex buffers but
+// not for the pixels of texture dictionaries it shares. Walk it properly if a shared-texture
+// report ever needs the difference.
 //
 // Read-only: it looks up the streaming module (moduleMgr at +0x1B8, the offset Cfx's Streaming.h
 // uses too), asks it for the dependency list, and recurses. SEH because it walks game-owned
 // arrays that a mid-eviction slot can leave half valid.
 typedef uint64_t (*CountDepMem_t)(void* mgr, uint32_t idx);
+typedef uint64_t (*ComputePhysSize_t)(void* entry, uint32_t idx);   // __thiscall: entry is `this`
 static CountDepMem_t g_countDepMemFn = nullptr;
+static ComputePhysSize_t g_physSizeFn = nullptr;
 static bool g_countDepTried = false;
 
-uint64_t slotMemoryCost(uint32_t id)
+void slotMemoryCost(uint32_t id, uint64_t* virt, uint64_t* phys)
 {
+    if (virt) *virt = 0;
+    if (phys) *phys = 0;
     if (!g_countDepTried) {
         g_countDepTried = true;
-        g_countDepMemFn = (CountDepMem_t)cfxSymbol("devtools-five.dll", "?CountDependencyMemory@@YA_KPEAVManager@streaming@@I@Z");
+        g_countDepMemFn = (CountDepMem_t)cfxSymbol("devtools-five.dll",
+            "?CountDependencyMemory@@YA_KPEAVManager@streaming@@I@Z");
+        g_physSizeFn = (ComputePhysSize_t)cfxSymbol("gta-streaming-five.dll",
+            "?ComputePhysicalSize@StreamingDataEntry@@QEAA_KI@Z");
     }
-    if (!g_countDepMemFn || !g_getStreamingManagerFn || !validStreamingId(id)) return 0;
+    if (!validStreamingId(id)) return;
     __try {
-        void* mgr = g_getStreamingManagerFn();
-        return mgr ? g_countDepMemFn(mgr, id) : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        if (virt && g_countDepMemFn && g_getStreamingManagerFn) {
+            void* mgr = g_getStreamingManagerFn();
+            if (mgr) *virt = g_countDepMemFn(mgr, id);
+        }
+        if (phys && g_physSizeFn) {
+            StrMgr* manager = exportedManagerSafe();
+            if (manager && id < (uint32_t)manager->numEntries)
+                *phys = g_physSizeFn(&manager->entries[id], id);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (virt) *virt = 0;
+        if (phys) *phys = 0;
+    }
 }
 
 // Contains no C++ objects so the virtual lookup can be isolated behind SEH. XBRVirtual inserts
@@ -196,6 +230,55 @@ StrMgr* exportedManagerSafe()
     __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
 }
 
+// Look up ONE exact key, no fallbacks. targetStreamingId cannot answer this question, because its
+// folder fallback only runs when the bare name MISSES, and for these files the bare name hits.
+static uint32_t slotForExactKey(const char* extension, const char* key)
+{
+    if (!g_getStreamingManagerFn || !g_getStreamingModuleFn) return 0xFFFFFFFF;
+    try {
+        void* manager = g_getStreamingManagerFn();
+        if (!manager) return 0xFFFFFFFF;
+        void* module = g_getStreamingModuleFn((uint8_t*)manager + 0x1B8, extension);
+        if (!module) return 0xFFFFFFFF;
+        return findModuleSlotSafe(module, key, runningGameBuild());
+    }
+    catch (...) { return 0xFFFFFFFF; }
+}
+
+// One NAME can own more than one slot. Vanilla ships mp_fm_skin_f_up_whi.ytd twice inside x64v.rpf,
+// in ped_mp_overlay_txds.rpf and in strm_peds_mp_overlay_txds.rpf, and the two are DIFFERENT images
+// (diffed straight out of the archives: the first carries Rockstar blue nipple markers, the second
+// is a flat wash). FindSlot returns one of them. Taking that one over and holding it leaves the ped
+// reading the other, which is exactly the shape of "registered, loaded from your file, still draws
+// vanilla". Root keys carry no folder, so nothing on the normal path ever probes the container form.
+// Returns a second, different index for this name, or 0xFFFFFFFF.
+uint32_t containerAliasId(const char* slot, uint32_t primary)
+{
+    static const char* kContainers[] = {
+        "ped_mp_overlay_txds", "strm_peds_mp_overlay_txds",
+        "streamedpeds_mp", "streamedpeds_players",
+    };
+    if (!slot || strchr(slot, 0x2F)) return 0xFFFFFFFF;   // root keys only
+    const char* dot = strrchr(slot, 0x2E);
+    if (!dot || dot == slot || !dot[1]) return 0xFFFFFFFF;
+    std::string stem(slot, (size_t)(dot - slot));
+    std::string extension(dot + 1);
+    const char* seps[] = { "/", "\\" };
+    for (const char* container : kContainers) {
+        for (const char* sep : seps) {
+            std::string key = std::string(container) + sep + stem;
+            uint32_t id = slotForExactKey(extension.c_str(), key.c_str());
+            if (validStreamingId(id) && id != primary) {
+                static std::set<std::string> said;
+                if (said.insert(extension).second)
+                    LOG_INFO(LogCategory::Claim, "Slot lookup for .%s: this name also owns the slot \"%s\" (id=%u), which is NOT the one the bare name resolves to; pinning both", extension.c_str(), key.c_str(), id);
+                return id;
+            }
+        }
+    }
+    return 0xFFFFFFFF;
+}
+
 int recoverOccupiedSlot(Ov& ov)
 {
     resolveOccupiedSlotExports();
@@ -212,6 +295,7 @@ int recoverOccupiedSlot(Ov& ov)
         return OCCUPIED_WAITING;
     }
     ov.id = target;
+    if (ov.altId == 0xFFFFFFFF) ov.altId = containerAliasId(ov.slot, target);
     __try {
         StrEntry& entry = g_mgr->entries[target];
         if (entry.handle != ov.handle && (entry.flags & 3) < 2) entry.handle = ov.handle;

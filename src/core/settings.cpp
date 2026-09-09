@@ -31,12 +31,6 @@ R"(# texoverride settings
 off = no
 
 
-# Write extra detail into texoverride.log.
-# Turn this on when someone is helping you work out a problem, and turn it off
-# again afterwards. It makes the log a lot longer.
-debug = no
-
-
 # How much memory the game may use for textures, in GB.
 #
 #   auto   the plugin picks a number that fits your graphics card
@@ -49,17 +43,9 @@ texture_budget = auto
 
 
 # Install new versions on their own, without asking you first.
+# The plugin always checks for a new version when it starts and always tells
+# you when one is out. This only decides whether it asks before installing.
 auto_update = no
-
-
-# Key that rescans tex_overrides straight away.
-#
-# The plugin normally notices new and changed files on its own. This is the
-# manual version: press the key in game and it looks again immediately, which
-# is handy while you are trying things out. Write off to disable it.
-#
-#   f1 to f12, or a single letter or digit
-refresh_key = f11
 
 
 # Take FiveM's own writing out of your screenshots.
@@ -72,12 +58,6 @@ refresh_key = f11
 #   printscreen, f1 to f12, a single letter or digit, or no
 #   always keeps them off the screen the whole time you play
 hide_overlay = no
-
-
-# Never check whether a new version is out.
-# Normally the plugin asks GitHub for the newest version number when it starts.
-# Turning this on stops that, and then it never uses the internet at all.
-no_update_check = no
 )";
 
 static std::string trim(const std::string& s)
@@ -95,11 +75,11 @@ static bool truthy(const std::string& v)
     return v == "yes" || v == "on" || v == "true" || v == "1" || v == "enabled";
 }
 
-// The refresh key, as a Windows virtual-key code. 0 means the user turned it off, -1 means they
-// wrote something that is not a key, which is worth a warning rather than a silent default.
-// GetAsyncKeyState rather than FiveM's InputHook::IsKeyDown on purpose. It needs no export a
-// FiveM update could rename, and the foreground check below is what IsKeyDown would have bought:
-// pressing the key in a browser while the game runs behind it must not rescan anything.
+// A key name from _settings.txt (hide_overlay) as a Windows virtual-key code. 0 means the user
+// turned it off, -1 means they wrote something that is not a key, which is worth a warning rather
+// than a silent default. The caller polls GetAsyncKeyState rather than FiveM's InputHook::IsKeyDown
+// on purpose: it needs no export a FiveM update could rename, and the caller's foreground check
+// is what IsKeyDown would have bought.
 int vkFromName(const std::string& raw)
 {
     std::string v = lower(raw);
@@ -128,6 +108,39 @@ static bool splitLine(const std::string& raw, std::string& k, std::string& v)
     k = lower(trim(s.substr(0, eq)));
     v = lower(trim(s.substr(eq + 1)));
     return !k.empty();
+}
+
+// Options that no longer exist. _settings.txt is never rewritten wholesale, so a dropped option
+// would otherwise sit in every existing install for ever, still explaining a feature that is not
+// there. The note above the line goes with it, or the file keeps describing the missing thing.
+static const char* kDeadKeys[] = {
+    "refresh_key",       // 0.8.23
+    "debug",             // 0.8.26: the log always carries DEBUG detail now
+    "force_reload",      // 0.8.26: dropped resident objects the game was still using; crashed the game
+    "no_update_check",   // 0.8.26: the update check always runs and always says what it found
+};
+
+static bool isDead(const std::string& k)
+{
+    for (const char* d : kDeadKeys) if (k == d) return true;
+    return false;
+}
+
+static bool stripDeadKeys(std::vector<std::string>& lines)
+{
+    bool changed = false;
+    for (size_t i = 0; i < lines.size(); ) {
+        std::string k, v;
+        if (!splitLine(lines[i], k, v) || !isDead(k)) { ++i; continue; }
+        size_t a = i;
+        while (a > 0) { std::string t = trim(lines[a - 1]); if (t.empty() || t[0] != '#') break; --a; }
+        size_t b = i + 1;
+        while (b < lines.size() && trim(lines[b]).empty()) ++b;   // the gap after, so blocks stay spaced
+        lines.erase(lines.begin() + a, lines.begin() + b);
+        i = a;
+        changed = true;
+    }
+    return changed;
 }
 
 // Note a marker file if it is there. The value is always "yes": a marker file only ever existed
@@ -164,16 +177,15 @@ void loadSettings()
     // never be the thing that switches one off, and THIS launch behaves exactly as the last one
     // did even though migrateSettings is about to delete the file the setting came from.
     bool mOff   = marker("_off", "off");
-    bool mDbg   = marker("_debug", "debug");
-    bool mVrb   = marker("_verbose", "debug");
     bool mAuto  = marker("_auto_update", "auto_update");
-    bool mNoUpd = marker("_no_update_check", "no_update_check");
+    // These three name options that no longer exist. Still noted, so the file gets deleted.
+    marker("_debug", "debug");
+    marker("_verbose", "debug");
+    marker("_no_update_check", "no_update_check");
     markerBudget();
 
     g_set.off           = mOff;
-    g_set.debug         = mDbg || mVrb;
     g_set.autoUpdate    = mAuto;
-    g_set.noUpdateCheck = mNoUpd;
 
     std::string p = ctlPath("_settings");
     if (p.empty()) return;
@@ -185,11 +197,8 @@ void loadSettings()
         std::string k, v;
         if (!splitLine(line, k, v)) continue;
         if      (k == "off")             g_set.off           = g_set.off           || truthy(v);
-        else if (k == "debug")           g_set.debug         = g_set.debug         || truthy(v);
         else if (k == "auto_update")     g_set.autoUpdate    = g_set.autoUpdate    || truthy(v);
-        else if (k == "no_update_check") g_set.noUpdateCheck = g_set.noUpdateCheck || truthy(v);
         else if (k == "texture_budget" && g_set.budget.empty()) g_set.budget = v;
-        else if (k == "refresh_key") g_set.refreshKey = v;
         else if (k == "hide_overlay") g_set.hideOverlay = v;
     }
     fclose(f);
@@ -219,8 +228,6 @@ void migrateSettings()
         LOG_WARN(LogCategory::Core, "Could not create _settings.txt in tex_overrides; running on defaults");
         return;
     }
-    if (g_markers.empty()) return;
-
     std::string path = ctlPath("_settings");
     std::vector<std::string> lines;
     {
@@ -231,7 +238,12 @@ void migrateSettings()
         fclose(f);
     }
 
+    bool dropped = stripDeadKeys(lines);
+    if (g_markers.empty() && !dropped) return;
+
+    // A marker for an option that no longer exists is only deleted, never written into the file.
     std::vector<bool> placed(g_markers.size(), false);
+    for (size_t i = 0; i < g_markers.size(); ++i) placed[i] = isDead(g_markers[i].key);
     for (auto& raw : lines) {
         std::string k, v;
         if (!splitLine(raw, k, v)) continue;
@@ -254,8 +266,15 @@ void migrateSettings()
     for (auto& l : lines) fputs(l.c_str(), f);
     fclose(f);
 
+    if (dropped)
+        LOG_INFO(LogCategory::Core, "Took an option that no longer exists out of _settings.txt (one of debug, force_reload, no_update_check, refresh_key)");
+
     for (auto& m : g_markers) {
-        if (DeleteFileA(m.path.c_str()))
+        if (isDead(m.key)) {
+            if (DeleteFileA(m.path.c_str()))
+                LOG_INFO(LogCategory::Core, "Deleted %s; that option no longer exists", rel(m.path.c_str()));
+        }
+        else if (DeleteFileA(m.path.c_str()))
             LOG_INFO(LogCategory::Core, "Moved %s into _settings.txt as \"%s = %s\" and deleted it",
                      rel(m.path.c_str()), m.key.c_str(), m.value.c_str());
         else

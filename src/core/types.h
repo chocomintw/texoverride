@@ -32,6 +32,12 @@ struct Ov {
     uint32_t altId = 0xFFFFFFFF;  // the index the STORE resolves this name to
     uint32_t handle = 0;          // the handle value that points at OUR file
     uint8_t loadedSeen = 0;       // 1 once the first LOADED has been logged for this slot
+    // Whose file the game reads is decided when the load STARTS, not when a beat first notices
+    // it finished. These three let LOADED say which, instead of reading the handle a second
+    // later and calling whatever is there the winner.
+    uint32_t loadHandle = 0;      // handle in the entry while the load was in flight
+    uint8_t loadEdgeSeen = 0;     // 1 if a beat caught this slot mid-load, so loadHandle is real
+    uint8_t reclaimedEarly = 0;   // 1 if the slot was reclaimed before its first LOADED
 };
 
 struct Cost {
@@ -45,6 +51,7 @@ struct Cand {
     std::string slot;
     std::string full;
     Cost c;
+    bool prio = false;   // came out of an *_override folder, so it outranks an ordinary copy
 };
 
 struct StrEntry {

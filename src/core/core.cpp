@@ -22,6 +22,37 @@
 #include <string>
 #include <unordered_map>
 
+// The store cannot answer a name lookup on FiveM's FIRST stream call, which is where the base
+// claim used to run. Every extension logged "the module does not know that name" there, and the
+// identical lookup succeeded about three seconds later. That killed the pin-both path stone dead
+// in every session ever logged: aliased was always 0, so a name the game already owned got a
+// freshly minted index, our handle landed in a slot nothing looks up, and the log read perfectly
+// while the game kept drawing its own file. Wait for the store to start answering before
+// claiming. The probe is two base-game names that have shipped in streamedpeds_mp.rpf since
+// launch, so it does not depend on what the user happens to have in tex_overrides.
+static bool storeAnswersNames()
+{
+    static const char* kProbe[] = { "mp_f_freemode_01/head_diff_000_a_whi.ytd",
+                                    "mp_f_freemode_01/head_000_r.ydd" };
+    for (const char* probe : kProbe) {
+        int why = SLOT_OK;
+        if (validStreamingId(targetStreamingId(probe, &why))) return true;
+    }
+    // Never trade the claim away entirely: the whole point of claiming early is to be holding the
+    // slot before the server's own mount arrives. If the store still says nothing by the deadline,
+    // claim on the old terms and say so, because an unpinned claim still beats no claim.
+    static ULONGLONG first = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (!first) first = now;
+    if (now - first < 20000) return false;
+    static bool said = false;
+    if (!said) {
+        said = true;
+        LOG_WARN(LogCategory::Claim, "The game's streaming store never answered a name lookup in 20s; claiming without checking which id each name already resolves to (files the game also ships may not take effect)");
+    }
+    return true;
+}
+
 uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asName, bool b2)
 {
     InterlockedIncrement(&g_regTotal);
@@ -60,7 +91,7 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
 
         // once the stream system is live (first call), register our files as base slot overrides.
         // o_regRaw is the trampoline (original), so these calls do NOT re-enter this hook.
-        if (!g_off && !g_didRegister)
+        if (!g_off && !g_didRegister && storeAnswersNames())
         {
             g_didRegister = true;
             // the pool must exist by now (this very call registers into it); if it looks wrong,
@@ -69,10 +100,18 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
                 LOG_WARN(LogCategory::Core, "Streaming pool looks invalid (entries=%p num=%d); re-assert disabled", (void*)g_mgr->entries, g_mgr->numEntries);
                 g_mgr = nullptr;
             }
-            int direct = 0, takeovers = 0, waiting = 0, rejected = 0, aliased = 0, shown = 0;
+            int direct = 0, takeovers = 0, waiting = 0, rejected = 0, aliased = 0;
             for (auto& ov : g_ovs)
             {
                 uint32_t id = 0xFFFFFFFF;
+                // Ask the store what this name resolves to BEFORE claiming it. o_regRaw mints a
+                // fresh index and re-points the name at it, so the same question asked afterwards
+                // can only ever hand back the id we were just given. That is what it did: on a
+                // 335 file pack every claim came back "unaliased" and the pin-both path below had
+                // never once fired, while the ids themselves were 335 consecutive integers in
+                // registration order, which scattered vanilla names could not possibly own.
+                int why = SLOT_OK;
+                uint32_t before = targetStreamingId(ov.slot, &why);
                 // named in _inflight.txt for the duration of the call; if the game dies in
                 // there, the next launch quarantines this key and boots without it
                 InterlockedExchange(&g_journalHot, 1);
@@ -90,12 +129,10 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
                     // its original one. The handle then lands in a slot nothing looks up and
                     // the log reads perfectly while nothing changes in game (seen on .ycd:
                     // seven scattered vanilla dictionaries came back with seven CONSECUTIVE
-                    // ids, which existing indices could never be). So ask the store what the
-                    // name really resolves to, and pin that entry as well.
-                    int why = SLOT_OK;
-                    uint32_t tgt = targetStreamingId(ov.slot, &why);
+                    // ids, which existing indices could never be). So pin the entry the store
+                    // resolved the name to before we touched it, as well.
                     noteSlotWhy(ov.slot, why);
-                    if (validStreamingId(tgt) && tgt != id) { ov.altId = tgt; ++aliased; }
+                    if (validStreamingId(before) && before != id) { ov.altId = before; ++aliased; }
                 }
                 else {
                     occupied = recoverOccupiedSlot(ov);
@@ -103,7 +140,7 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
                     else if (occupied == OCCUPIED_WAITING) ++waiting;
                     else ++rejected;
                 }
-                if (g_minLogLevel == LogLevel::Debug || ++shown <= 10) {
+                {
                     if (id != 0xFFFFFFFF && ov.altId != 0xFFFFFFFF)
                         LOG_INFO(LogCategory::Claim, "OVERRIDE-REG: %s <- tex_overrides/%s (id=%u handle=%08x; store resolves to id=%u, pinning both)", ov.slot, rel(ov.file), id, ov.handle, ov.altId);
                     else if (id != 0xFFFFFFFF)
@@ -118,9 +155,6 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
             }
             InterlockedExchange(&g_journalHot, 0);
             DeleteFileA(g_inflightPath);   // whole loop survived; nothing to quarantine
-            if (g_ovs.size() > 10 && g_minLogLevel != LogLevel::Debug) {
-                LOG_INFO(LogCategory::Claim, "  ...and %zu more override(s) registered directly", g_ovs.size() - 10);
-            }
             LOG_INFO(LogCategory::Claim, "Claimed %d base-slot override(s): %d direct, %d occupied-slot takeover, %d waiting for target, %d rejected",
                      direct + takeovers + waiting, direct, takeovers, waiting, rejected);
             if (aliased) LOG_INFO(LogCategory::Claim, "%d of those named a slot the game already owned under a different id; pinned both", aliased);
@@ -218,26 +252,19 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
             }
             else if (isAllowedKey(keyLower)) {
                 // A loose file we could actually take over, so it answers "what can I override
-                // here". Worth listing, but a big server streams enough of them to be worth a cap,
-                // and THIS is the line the 500 cap was always meant for.
-                // debug lifts it: the one job the cap gets in the way of is looking up the exact
-                // name of a specific server prop, which is the whole reason to read this list, and
-                // a player who has gone and turned debug on has asked for the long version.
-                if (++g_collListed <= 500 || g_set.debug)
-                    LOG_INFO(LogCategory::Collection, "Server file:       %-40s [overridable, put yours in tex_overrides/]", coll.c_str());
-                else if (g_collListed == 501)
-                    LOG_WARN(LogCategory::Collection, "500 overridable server files listed; the rest are counted only - set debug = yes in _settings.txt to list them all");
+                // here". Every one is listed: looking up the exact name of one server prop is the
+                // whole reason anyone reads this list, and the 500 cap used to block exactly that.
+                LOG_INFO(LogCategory::Collection, "Server file:       %-40s [overridable, put yours in tex_overrides/]", coll.c_str());
             }
             else {
                 // Refused on TYPE or PREFIX, never on a name we might one day learn: a .ymap will
                 // never be a ped part, and a .ybn is collision. So unlike
                 // a refused COLLECTION there is nothing to discover here, and the volume is not
                 // hypothetical: 24758 of 26337 map lines on one real server (94%), peaking at 1624
-                // in a single second. Every one was an fopen/fprintf/fclose inside g_logCs while
-                // this thread also held g_cs and the game's main thread sat waiting on g_cs in
-                // drainOps. Count them, say so once, and put the names behind _debug.txt.
-                if (++g_collOther == 1)
-                    LOG_INFO(LogCategory::Collection, "Other server files (vehicle, prop and map data) are counted, not listed - set debug = yes in _settings.txt to see them");
+                // in a single second. Back then every line was an fopen/fprintf/fclose inside
+                // g_logCs while this thread also held g_cs; the log file has stayed open since
+                // 0.8.x, so listing them is one fprintf each, and the count feeds the heartbeat.
+                ++g_collOther;
                 LOG_DEBUG(LogCategory::Collection, "Server file:       %-40s [OTHER - never touched]", coll.c_str());
             }
         }
@@ -367,6 +394,7 @@ DWORD WINAPI BeatLoop(LPVOID)
 {
     int beatOurs = 0, beatTheirs = 0, beatLoaded = 0;   // ours / re-taken / resident right now
     long moved = 0;                                    // slots whose name moved to another id
+    size_t revalCursor = 0;                            // round robin over the name revalidation
     long watchWait = 0;                                // ticks spent waiting for a start signal
     long heavyInMemory = 0;
     long prevReclaims = 0, prevRedirects = 0, prevLateBinds = 0;
@@ -401,7 +429,22 @@ DWORD WINAPI BeatLoop(LPVOID)
             if (!g_off && g_idsReady && g_mgr && g_mgr->entries) {
                 EnterCriticalSection(&g_cs);
                 beatOurs = beatTheirs = beatLoaded = 0;
-                for (auto& ov : g_ovs) {
+                // The handle-match fast path below used to skip the name check entirely, so an
+                // index nobody else writes was never validated again after the claim. A slot the
+                // store has since re-pointed elsewhere then looks exactly like a healthy one for
+                // the rest of the session and the heartbeat counts it as held: "335 held, 0
+                // contested" reads the same whether the names still resolve here or not. Re-check
+                // a slice each beat, round robin, so every override is revalidated within a full
+                // sweep without putting a lookup per override per second under g_cs.
+                // ponytail: fixed 32 per beat, so a 6,000 file pack sweeps in about 3 minutes.
+                // Make it proportional if that ever needs to be faster.
+                const size_t revalBudget = 32;
+                const size_t ovCount = g_ovs.size();
+                const size_t revalFrom = ovCount ? revalCursor % ovCount : 0;
+                if (ovCount) revalCursor = (revalFrom + revalBudget) % ovCount;
+                for (size_t ovN = 0; ovN < ovCount; ++ovN) {
+                    Ov& ov = g_ovs[ovN];
+                    const bool sliceHit = inSweepSlice(ovN, ovCount, revalFrom, revalBudget);
                     if (ov.handle && ov.id == 0xFFFFFFFF) {
                         uint32_t appeared = targetStreamingId(ov.slot);
                         if (validStreamingId(appeared)) {
@@ -416,8 +459,13 @@ DWORD WINAPI BeatLoop(LPVOID)
                     for (uint32_t which : { ov.id, ov.altId }) {
                         if (which >= (uint32_t)g_mgr->numEntries) continue;
                         StrEntry& e = g_mgr->entries[which];
-                        bool loaded = (e.flags & 3) == 1;
+                        const uint32_t status = e.flags & 3;
+                        bool loaded = status == 1;
                         if (loaded) ++beatLoaded;
+                        // Whose file the game reads is settled when the load STARTS. Sample the
+                        // handle while the load is in flight, so a RECLAIM landing between the
+                        // load and the beat that notices it cannot be reported as our win.
+                        if (status >= 2 && !ov.loadedSeen) { ov.loadHandle = e.handle; ov.loadEdgeSeen = 1; }
                         // First time the game has this slot in memory: say whose file it read.
                         // A slot can be held all session and still show the game's texture if
                         // the load happened while the DLC mount owned the handle and refs then
@@ -427,44 +475,65 @@ DWORD WINAPI BeatLoop(LPVOID)
                             // The scan's cost audit reads page flags out of the file on disk, so it
                             // charges a drawable nothing for the texture dictionaries it shares.
                             // Now that the slot is resident the game can be asked what it really
-                            // took, dependencies included.
-                            uint64_t mem = slotMemoryCost(which);
-                            char cost[64] = "";
-                            if (mem) _snprintf_s(cost, _TRUNCATE, " (%.1f MB in memory with dependencies)", mem / 1048576.0);
-                            if (e.handle == ov.handle) LOG_DEBUG(LogCategory::Claim, "LOADED: %s from your file%s", ov.slot, cost);
-                            else LOG_WARN(LogCategory::Claim, "LOADED: %s from the GAME file (handle %08x)%s; your file shows only after the game drops and reloads it", ov.slot, e.handle, cost);
-                            if (mem >= (8ull << 20) && ++heavyInMemory <= 20)
-                                LOG_WARN(LogCategory::Audit, "  HEAVY IN MEMORY: %s really costs %.1f MB loaded (shrink it to fight texture loss)", ov.slot, mem / 1048576.0);
+                            // took. Texture memory is the physical figure; the virtual one is the
+                            // dependency walk. Reported apart because they are separate budgets.
+                            uint64_t memV = 0, memP = 0;
+                            slotMemoryCost(which, &memV, &memP);
+                            char cost[96] = "";
+                            if (memV || memP)
+                                _snprintf_s(cost, _TRUNCATE, " (%.1f MB texture, %.1f MB virtual with dependencies)", memP / 1048576.0, memV / 1048576.0);
+                            uint32_t readBy = ov.loadEdgeSeen ? ov.loadHandle : e.handle;
+                            // The game got there first. Holding the slot changes nothing while the
+                            // object stays resident, and the plugin must NOT drop it: 0.8.24 and
+                            // 0.8.25 did (force_reload), which is RemoveObject on clothing a ped is
+                            // still drawing, and the game answered with ERR_GEN_PAGE_1 on every
+                            // server that contests a slot. Cfx only runs that sequence when a
+                            // resource is torn down. So say whose copy it is and leave it alone.
+                            if (readBy != ov.handle)
+                                LOG_WARN(LogCategory::Claim, "LOADED: %s from the GAME file (handle %08x)%s; your file shows once the game reloads it, or after a restart", ov.slot, readBy, cost);
+                            else if (ov.loadEdgeSeen || !ov.reclaimedEarly)
+                                LOG_DEBUG(LogCategory::Claim, "LOADED: %s from your file%s", ov.slot, cost);
+                            else
+                                LOG_WARN(LogCategory::Claim, "LOADED: %s holds your file now%s, but it was reclaimed before the load was seen, so the game may have read its own copy", ov.slot, cost);
+                            if (memP >= (8ull << 20) && ++heavyInMemory <= 20)
+                                LOG_WARN(LogCategory::Audit, "  HEAVY IN MEMORY: %s really costs %.1f MB of texture memory loaded (shrink it to fight texture loss)", ov.slot, memP / 1048576.0);
                         }
-                        if (e.handle == ov.handle) { ++beatOurs; continue; }
-                        // Somebody else wrote this slot. Before writing back, check the slot still
-                        // carries OUR name. FiveM frees a slot the server created once its resource
-                        // is gone (CfxCollection_RemoveStreamingTag sets handle 0, the unload before
-                        // a reconnect calls RemoveSlot), and the store hands that index to the next
+                        const bool ours = e.handle == ov.handle;
+                        // Before writing back, check the slot still carries OUR name. FiveM frees a
+                        // slot the server created once its resource is gone
+                        // (CfxCollection_RemoveStreamingTag sets handle 0, the unload before a
+                        // reconnect calls RemoveSlot), and the store hands that index to the next
                         // file registered. Our handle written into it would point a stranger's
                         // asset at our file. Only the index the NAME resolves to can be freed that
-                        // way: the extra index the claim minted in the aliased case never resolves
-                        // by name and is never freed, so it is exempt. A lookup that fails for a
-                        // reason other than "unknown name" says nothing about the slot; skip the
-                        // beat rather than guess.
-                        int why = SLOT_OK;
-                        uint32_t byName = targetStreamingId(ov.slot, &why);
-                        bool phantom = (which == ov.id && ov.altId != 0xFFFFFFFF);
-                        if (!phantom && byName != which) {
-                            if (why != SLOT_OK && why != SLOT_NO_NAME) continue;
-                            uint32_t& ref = (which == ov.altId) ? ov.altId : ov.id;
-                            ref = validStreamingId(byName) ? byName : 0xFFFFFFFF;
-                            if (++moved <= 60)
-                                LOG_INFO(LogCategory::Claim, "MOVED: %s no longer lives at id=%u (handle there %08x); %s", ov.slot, which, e.handle,
-                                         ref == 0xFFFFFFFF ? "name unknown, waiting for it to come back" : "following the name to its new id");
-                            continue;
+                        // way, so altId, which is deliberately the index the name has ALREADY moved
+                        // off, is exempt. A lookup that fails for a reason other than "unknown
+                        // name" says nothing about the slot; skip the beat rather than guess.
+                        // Checked whenever somebody else wrote the slot, and on the round robin
+                        // slice, because an untouched index needs validating too.
+                        const bool phantom = (which == ov.altId && ov.altId != ov.id);
+                        if (!phantom && (!ours || sliceHit)) {
+                            int why = SLOT_OK;
+                            uint32_t byName = targetStreamingId(ov.slot, &why);
+                            if (byName != which) {
+                                if (why != SLOT_OK && why != SLOT_NO_NAME) continue;
+                                uint32_t& ref = (which == ov.altId) ? ov.altId : ov.id;
+                                ref = validStreamingId(byName) ? byName : 0xFFFFFFFF;
+                                if (++moved <= 60)
+                                    LOG_INFO(LogCategory::Claim, "MOVED: %s no longer lives at id=%u (handle there %08x); %s", ov.slot, which, e.handle,
+                                             ref == 0xFFFFFFFF ? "name unknown, waiting for it to come back" : "following the name to its new id");
+                                continue;
+                            }
                         }
+                        if (ours) { ++beatOurs; continue; }
                         ++beatTheirs;
-                        if ((e.flags & 3) >= 2) { ++g_deferred; continue; }   // being requested/loaded right now; retry next tick
+                        if (status >= 2) { ++g_deferred; continue; }   // being requested/loaded right now; retry next tick
                         uint32_t old = e.handle;
                         e.handle = ov.handle;
+                        if (!ov.loadedSeen) ov.reclaimedEarly = 1;
+                        // Taking a slot back that is already resident is the same problem as the
+                        // LOADED case above: the handle is ours now, the pixels are still theirs.
                         if (++g_reclaims <= 60) LOG_INFO(LogCategory::Claim, "RECLAIM: %s (id=%u, %08x -> %08x)%s", ov.slot, which, old, ov.handle,
-                                                          loaded ? " - already in memory from the game file, applies after reload" : "");
+                                                          !loaded ? "" : " - already in memory from the game file, applies after reload");
                     }
                 }
                 LeaveCriticalSection(&g_cs);
@@ -486,10 +555,12 @@ DWORD WINAPI BeatLoop(LPVOID)
         prevLateBinds = g_lateBinds;
         prevTheirs = beatTheirs;
 
+        // "held" on its own was never the whole story: a slot can be held all session and still
+        // show the game's texture.
         if (changed) {
             LOG_INFO(LogCategory::Core, "Heartbeat (beat %d): %d held, %d contested, %ld reclaims (+%ld), %ld redirects (+%ld)",
                      beat, beatOurs, beatTheirs, g_reclaims, dReclaims, (long)g_redirects, dRedirects);
-        } else if (beat % (g_minLogLevel == LogLevel::Debug ? 4 : 20) == 0 || beat == 1) {
+        } else if (beat % 4 == 0 || beat == 1) {
             LOG_INFO(LogCategory::Core, "Heartbeat (beat %d): %d held, %d contested, %d in memory, %ld redirects, %ld other server files",
                      beat, beatOurs, beatTheirs, beatLoaded, (long)g_redirects, g_collOther);
         }
@@ -521,8 +592,6 @@ void Setup()
     InitializeCriticalSection(&g_logCs);
     g_logCsInit = true;
     InitializeCriticalSection(&g_cs);   // must exist before the hook can fire
-
-    if (g_set.debug) g_minLogLevel = LogLevel::Debug;
 
     // fresh log every launch, but keep one previous generation: after a crash the next launch
     // used to destroy the exact log that showed what the crashed session was doing
