@@ -16,8 +16,9 @@ The level is `INFO`, `WARN` or `ERROR`. If something did not work, search the fi
 `ERROR` first, because those two carry the reason. The category says which part of the plugin
 spoke: `CORE`, `SCAN`, `COLLECTION`, `AUDIT`, `CLAIM`, `VERIFY`, `LIVE`, `TATTOO` or `UPDATE`.
 
-There is a fourth level, `DEBUG`, which is off unless you set `debug = yes` in `_settings.txt`.
-It adds internal detail that is only useful when someone is helping you work out a problem.
+There is a fourth level, `DEBUG`, which is always on. It adds internal detail that is mostly
+useful when someone is helping you work out a problem, and it is there from the first launch so
+nobody has to ask you to turn something on and send the log again.
 
 | Line | What it means |
 |---|---|
@@ -47,8 +48,7 @@ It adds internal detail that is only useful when someone is helping you work out
 | `OVERRIDE-FAILED: slot <- file` | Registration failed and produced no usable entry |
 | `LATE-BIND: slot ...` | A previously missing target appeared and was attached |
 | `RECLAIM: slot (old -> ours)` | The game tried to take an item back; the plugin re-took it |
-| `FORCED-RELOAD: slot dropped from memory` | The game had already loaded its own copy; the plugin dropped it so yours is read instead |
-| `LOADED: slot from the GAME file` | The game read its own copy of that file. With `force_reload` on, the line above follows |
+| `LOADED: slot from the GAME file` | The game read its own copy of that file before the plugin held the slot. Yours shows once the game reloads it, or after a restart |
 | `MOVED: slot no longer lives at id=...` | The game freed that slot and reused the index; the plugin follows the name instead of writing into it |
 | `REDIRECT name -> file` | A server file was swapped for yours |
 | `PLACEMENT: ...` | A tattoo position change was applied |
@@ -68,12 +68,9 @@ The three tags on a `Server collection` line mean:
 - `OTHER - never touched`, a story or ambient character. The plugin refuses these on purpose.
 
 Collections are always listed, refused ones included, because that list is how new character names
-get found. Loose files are treated differently. The ones you can replace are listed, up to 500 of
-them. Everything else the server streams (car parts, map pieces, often tens of thousands of files)
-is only counted, because those names can never be used, and listing them buried the useful lines
-and slowed the game down while it wrote them.
-
-Set `debug = yes` in `_settings.txt` and both limits come off: every file is named and the 500
-limit no longer applies. That is how you find the exact name of one particular server prop.
+get found. Loose files are listed too, every one of them, so you can find the exact name of one
+particular server prop. Everything else the server streams (car parts, map pieces, often tens of
+thousands of files) is written at `DEBUG` level under `OTHER - never touched`, and the heartbeat
+line carries the count.
 
 [Back to the README](../README.md)

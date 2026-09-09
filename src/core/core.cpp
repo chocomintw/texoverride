@@ -100,7 +100,7 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
                 LOG_WARN(LogCategory::Core, "Streaming pool looks invalid (entries=%p num=%d); re-assert disabled", (void*)g_mgr->entries, g_mgr->numEntries);
                 g_mgr = nullptr;
             }
-            int direct = 0, takeovers = 0, waiting = 0, rejected = 0, aliased = 0, shown = 0;
+            int direct = 0, takeovers = 0, waiting = 0, rejected = 0, aliased = 0;
             for (auto& ov : g_ovs)
             {
                 uint32_t id = 0xFFFFFFFF;
@@ -140,7 +140,7 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
                     else if (occupied == OCCUPIED_WAITING) ++waiting;
                     else ++rejected;
                 }
-                if (g_minLogLevel == LogLevel::Debug || ++shown <= 10) {
+                {
                     if (id != 0xFFFFFFFF && ov.altId != 0xFFFFFFFF)
                         LOG_INFO(LogCategory::Claim, "OVERRIDE-REG: %s <- tex_overrides/%s (id=%u handle=%08x; store resolves to id=%u, pinning both)", ov.slot, rel(ov.file), id, ov.handle, ov.altId);
                     else if (id != 0xFFFFFFFF)
@@ -155,9 +155,6 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
             }
             InterlockedExchange(&g_journalHot, 0);
             DeleteFileA(g_inflightPath);   // whole loop survived; nothing to quarantine
-            if (g_ovs.size() > 10 && g_minLogLevel != LogLevel::Debug) {
-                LOG_INFO(LogCategory::Claim, "  ...and %zu more override(s) registered directly", g_ovs.size() - 10);
-            }
             LOG_INFO(LogCategory::Claim, "Claimed %d base-slot override(s): %d direct, %d occupied-slot takeover, %d waiting for target, %d rejected",
                      direct + takeovers + waiting, direct, takeovers, waiting, rejected);
             if (aliased) LOG_INFO(LogCategory::Claim, "%d of those named a slot the game already owned under a different id; pinned both", aliased);
@@ -255,27 +252,19 @@ uint32_t* h_regRaw(uint32_t* fileId, const char* name, bool b1, const char* asNa
             }
             else if (isAllowedKey(keyLower)) {
                 // A loose file we could actually take over, so it answers "what can I override
-                // here". Worth listing, but a big server streams enough of them to be worth a cap,
-                // and THIS is the line the 500 cap was always meant for.
-                // debug lifts it: the one job the cap gets in the way of is looking up the exact
-                // name of a specific server prop, which is the whole reason to read this list, and
-                // a player who has gone and turned debug on has asked for the long version.
-                if (++g_collListed <= 500 || g_set.debug)
-                    LOG_INFO(LogCategory::Collection, "Server file:       %-40s [overridable, put yours in tex_overrides/]", coll.c_str());
-                else if (g_collListed == 501)
-                    LOG_WARN(LogCategory::Collection, "500 overridable server files listed; the rest are counted only - set debug = yes in _settings.txt to list them all");
+                // here". Every one is listed: looking up the exact name of one server prop is the
+                // whole reason anyone reads this list, and the 500 cap used to block exactly that.
+                LOG_INFO(LogCategory::Collection, "Server file:       %-40s [overridable, put yours in tex_overrides/]", coll.c_str());
             }
             else {
                 // Refused on TYPE or PREFIX, never on a name we might one day learn: a .ymap will
                 // never be a ped part, and a .ybn is collision. So unlike
                 // a refused COLLECTION there is nothing to discover here, and the volume is not
                 // hypothetical: 24758 of 26337 map lines on one real server (94%), peaking at 1624
-                // in a single second. Every one was an fopen/fprintf/fclose inside g_logCs while
-                // this thread also held g_cs and the game's main thread sat waiting on g_cs in
-                // drainOps. Count them, say so once, and put the names behind _debug.txt.
-                // With debug on the names ARE listed, one line below, so the hint would be a lie.
-                if (++g_collOther == 1 && !g_set.debug)
-                    LOG_INFO(LogCategory::Collection, "Other server files (vehicle, prop and map data) are counted, not listed - set debug = yes in _settings.txt to see them");
+                // in a single second. Back then every line was an fopen/fprintf/fclose inside
+                // g_logCs while this thread also held g_cs; the log file has stayed open since
+                // 0.8.x, so listing them is one fprintf each, and the count feeds the heartbeat.
+                ++g_collOther;
                 LOG_DEBUG(LogCategory::Collection, "Server file:       %-40s [OTHER - never touched]", coll.c_str());
             }
         }
@@ -495,31 +484,17 @@ DWORD WINAPI BeatLoop(LPVOID)
                                 _snprintf_s(cost, _TRUNCATE, " (%.1f MB texture, %.1f MB virtual with dependencies)", memP / 1048576.0, memV / 1048576.0);
                             uint32_t readBy = ov.loadEdgeSeen ? ov.loadHandle : e.handle;
                             // The game got there first. Holding the slot changes nothing while the
-                            // object stays resident, so hand it to the game thread to be dropped;
-                            // the next request for the name then comes through our handle.
-                            // A slot reclaimed before any load edge was seen counts as theirs too:
-                            // the handle reads as ours NOW, but nobody watched the load start, so
-                            // the resident object may still be the game's. This is the common case
-                            // during the loading screen, and guessing the other way is what leaves
-                            // a dead animation dictionary for the session. Dropping costs nothing
-                            // when the guess is wrong, since forceReloadSlot only ever drops a
-                            // resident slot that already carries our handle.
-                            const bool maybeTheirs = readBy != ov.handle || (!ov.loadEdgeSeen && ov.reclaimedEarly);
-                            if (maybeTheirs && g_set.forceReload && !ov.dropQueued) {
-                                ov.dropQueued = 1;
-                                g_dropQ.push_back(DropReq{ which, ov.handle, ov.slot });
-                                InterlockedExchange(&g_dropPending, 1);
-                            }
+                            // object stays resident, and the plugin must NOT drop it: 0.8.24 and
+                            // 0.8.25 did (force_reload), which is RemoveObject on clothing a ped is
+                            // still drawing, and the game answered with ERR_GEN_PAGE_1 on every
+                            // server that contests a slot. Cfx only runs that sequence when a
+                            // resource is torn down. So say whose copy it is and leave it alone.
                             if (readBy != ov.handle)
-                                LOG_WARN(LogCategory::Claim, "LOADED: %s from the GAME file (handle %08x)%s; %s", ov.slot, readBy, cost,
-                                         g_set.forceReload ? "dropping it so the game reads yours instead"
-                                                           : "your file shows only after the game drops and reloads it");
-                            else if (!maybeTheirs)
+                                LOG_WARN(LogCategory::Claim, "LOADED: %s from the GAME file (handle %08x)%s; your file shows once the game reloads it, or after a restart", ov.slot, readBy, cost);
+                            else if (ov.loadEdgeSeen || !ov.reclaimedEarly)
                                 LOG_DEBUG(LogCategory::Claim, "LOADED: %s from your file%s", ov.slot, cost);
                             else
-                                LOG_WARN(LogCategory::Claim, "LOADED: %s holds your file now%s, but it was reclaimed before the load was seen, so the game may have read its own copy; %s", ov.slot, cost,
-                                         g_set.forceReload ? "dropping it to be sure"
-                                                           : "turn force_reload on in _settings.txt to have it dropped and reread");
+                                LOG_WARN(LogCategory::Claim, "LOADED: %s holds your file now%s, but it was reclaimed before the load was seen, so the game may have read its own copy", ov.slot, cost);
                             if (memP >= (8ull << 20) && ++heavyInMemory <= 20)
                                 LOG_WARN(LogCategory::Audit, "  HEAVY IN MEMORY: %s really costs %.1f MB of texture memory loaded (shrink it to fight texture loss)", ov.slot, memP / 1048576.0);
                         }
@@ -557,14 +532,8 @@ DWORD WINAPI BeatLoop(LPVOID)
                         if (!ov.loadedSeen) ov.reclaimedEarly = 1;
                         // Taking a slot back that is already resident is the same problem as the
                         // LOADED case above: the handle is ours now, the pixels are still theirs.
-                        if (loaded && g_set.forceReload && !ov.dropQueued) {
-                            ov.dropQueued = 1;
-                            g_dropQ.push_back(DropReq{ which, ov.handle, ov.slot });
-                            InterlockedExchange(&g_dropPending, 1);
-                        }
                         if (++g_reclaims <= 60) LOG_INFO(LogCategory::Claim, "RECLAIM: %s (id=%u, %08x -> %08x)%s", ov.slot, which, old, ov.handle,
-                                                          !loaded ? "" : (g_set.forceReload ? " - was in memory from the game file, dropping it to reload yours"
-                                                                                            : " - already in memory from the game file, applies after reload"));
+                                                          !loaded ? "" : " - already in memory from the game file, applies after reload");
                     }
                 }
                 LeaveCriticalSection(&g_cs);
@@ -587,15 +556,13 @@ DWORD WINAPI BeatLoop(LPVOID)
         prevTheirs = beatTheirs;
 
         // "held" on its own was never the whole story: a slot can be held all session and still
-        // show the game's texture. Forced reloads say how often that had to be corrected.
-        char forced[48] = "";
-        if (g_forcedReloads) _snprintf_s(forced, _TRUNCATE, ", %ld forced reload(s)", g_forcedReloads);
+        // show the game's texture.
         if (changed) {
-            LOG_INFO(LogCategory::Core, "Heartbeat (beat %d): %d held, %d contested, %ld reclaims (+%ld), %ld redirects (+%ld)%s",
-                     beat, beatOurs, beatTheirs, g_reclaims, dReclaims, (long)g_redirects, dRedirects, forced);
-        } else if (beat % (g_minLogLevel == LogLevel::Debug ? 4 : 20) == 0 || beat == 1) {
-            LOG_INFO(LogCategory::Core, "Heartbeat (beat %d): %d held, %d contested, %d in memory, %ld redirects, %ld other server files%s",
-                     beat, beatOurs, beatTheirs, beatLoaded, (long)g_redirects, g_collOther, forced);
+            LOG_INFO(LogCategory::Core, "Heartbeat (beat %d): %d held, %d contested, %ld reclaims (+%ld), %ld redirects (+%ld)",
+                     beat, beatOurs, beatTheirs, g_reclaims, dReclaims, (long)g_redirects, dRedirects);
+        } else if (beat % 4 == 0 || beat == 1) {
+            LOG_INFO(LogCategory::Core, "Heartbeat (beat %d): %d held, %d contested, %d in memory, %ld redirects, %ld other server files",
+                     beat, beatOurs, beatTheirs, beatLoaded, (long)g_redirects, g_collOther);
         }
     }
 }
@@ -625,8 +592,6 @@ void Setup()
     InitializeCriticalSection(&g_logCs);
     g_logCsInit = true;
     InitializeCriticalSection(&g_cs);   // must exist before the hook can fire
-
-    if (g_set.debug) g_minLogLevel = LogLevel::Debug;
 
     // fresh log every launch, but keep one previous generation: after a crash the next launch
     // used to destroy the exact log that showed what the crashed session was doing

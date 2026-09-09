@@ -38,7 +38,6 @@ struct Ov {
     uint32_t loadHandle = 0;      // handle in the entry while the load was in flight
     uint8_t loadEdgeSeen = 0;     // 1 if a beat caught this slot mid-load, so loadHandle is real
     uint8_t reclaimedEarly = 0;   // 1 if the slot was reclaimed before its first LOADED
-    uint8_t dropQueued = 0;       // 1 once this slot has been queued for a forced reload
 };
 
 struct Cost {
@@ -97,15 +96,6 @@ struct LiveOp {
     int kind; // 0 = register, 1 = re-stat
     Ov ov;
     uint32_t handle;
-};
-
-// A slot the game loaded from its own file while we held the name. The beat thread spots it, the
-// game thread drops it, because ReleaseObject mutates streaming state and belongs where the game
-// runs. Copied out of g_ovs under the lock so the drop itself needs no lock at all.
-struct DropReq {
-    uint32_t id;
-    uint32_t handle;
-    const char* slot;   // persistent string, same one Ov holds
 };
 
 struct Snap {

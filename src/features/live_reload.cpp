@@ -167,40 +167,6 @@ BOOL WINAPI h_peekMsg(LPMSG m, HWND w, UINT a, UINT b, UINT r)
     return g_origPeek(m, w, a, b, r);
 }
 
-// Slots the beat found the game had already loaded from its own file. Dropping the resident
-// object is the only thing that makes our file show without a restart, and ReleaseObject mutates
-// streaming state, so it runs here and nowhere else.
-//
-// The requests are copied out from under the lock first: the drop is a call into GTA5.exe, and
-// the plugin's hook takes g_cs, so holding it across game code invites a deadlock. Journalled
-// like a registration, so if a drop ever faults the next launch quarantines that one file
-// instead of failing the same way every time.
-static void drainDrops()
-{
-    std::vector<DropReq> batch;
-    EnterCriticalSection(&g_cs);
-    batch.swap(g_dropQ);
-    InterlockedExchange(&g_dropPending, 0);
-    LeaveCriticalSection(&g_cs);
-
-    for (const DropReq& d : batch) {
-        InterlockedExchange(&g_journalHot, 1);
-        journalOne(d.slot);
-        int why = forceReloadSlot(d.id, d.handle);
-        InterlockedExchange(&g_journalHot, 0);
-        DeleteFileA(g_inflightPath);
-        if (why == DROP_OK) {
-            if (++g_forcedReloads <= 60)
-                LOG_INFO(LogCategory::Claim, "FORCED-RELOAD: %s (id=%u) dropped from memory; the game reads your file next time it needs it", d.slot, d.id);
-        }
-        else if (why != DROP_NOT_LOADED) {
-            // NOT_LOADED just means the game dropped it on its own between the two threads, which
-            // is the outcome we wanted anyway. Anything else is worth a line.
-            LOG_WARN(LogCategory::Claim, "FORCED-RELOAD: %s (id=%u) not dropped, %s", d.slot, d.id, dropWhyText(why));
-        }
-    }
-}
-
 // Everything the plugin does on the game's main thread, from whichever of the two pumps is live.
 void framePumpTick()
 {
@@ -214,7 +180,6 @@ void framePumpTick()
     if (nowMs >= devNext) { LOG_DEV(LogCategory::Live, "frame pump: %ld tick(s) in the last 10s", devTicks); devTicks = 0; devNext = nowMs + 10000; }
 #endif
     if (g_opsPending) drainOps();
-    if (g_dropPending) drainDrops();
     shotKeyTick();
     // Once a second, on the game's own thread. grcResourceCache::GetInstance is a jump straight
     // into GTA5.exe, and the plugin's standing rule for calls into game code is that they run

@@ -195,8 +195,8 @@ The version you had stays beside the new one as `texoverride.asi.old`. If the ne
 you trouble, delete `texoverride.asi` and rename the `.old` file back to `texoverride.asi`.
 
 To make updates install automatically without asking, set `auto_update = yes` in
-`_settings.txt`. To turn the check off completely, set `no_update_check = yes`. See Settings
-below.
+`_settings.txt`. You still get a message saying what was installed, so an update never lands
+without you knowing. The check itself cannot be turned off. See Settings below.
 
 That is the plugin's only network use. It sends nothing about you, your game or your files, and if you are
 offline it quietly does nothing.
@@ -219,10 +219,10 @@ it in Notepad. Every option is listed, switched off, and explained where it sits
 save, restart FiveM.
 
 ```
-# Write extra detail into texoverride.log.
-# Turn this on when someone is helping you work out a problem, and turn it off
-# again afterwards. It makes the log a lot longer.
-debug = no
+# Install new versions on their own, without asking you first.
+# The plugin always checks for a new version when it starts and always tells
+# you when one is out. This only decides whether it asks before installing.
+auto_update = no
 ```
 
 That is the whole thing. `no` becomes `yes` and the option is on. Lines starting with `#` are
@@ -231,23 +231,16 @@ notes and the plugin skips them.
 | Option | What it does |
 |--------|--------------|
 | `off` | Plugin stays installed but does nothing at all |
-| `debug` | Adds `DEBUG` detail to the log |
 | `texture_budget` | `auto`, `game`, or a number of GB |
 | `auto_update` | Installs new versions without asking |
-| `no_update_check` | Never checks whether a new version is out |
 | `hide_overlay` | Keys that take FiveM's corner text off the screen for a moment (`printscreen`, `f1` to `f12`, a letter, a digit), or `always` |
-| `force_reload` | On by default. Makes your file win a slot the game already filled |
 
 `yes`, `on`, `true` and `1` all mean on. Anything else means off. Capital letters do not matter.
 
-`force_reload` is the one option that starts switched on. The plugin claims a file's name before
-the game starts, but the game can still get there first and load its own copy, and once something
-is in memory it stays there. Body skin, eye colour and some clothing textures hit this a lot,
-because the same texture name lives in four different game archives and every one of them is
-loaded during startup. With this on, the plugin drops the game's copy so your file is read
-instead, and the log says `FORCED-RELOAD` when it does. Turn it off if you would rather the
-plugin never touched anything the game already has open; your files then look unchanged until
-something makes the game load them again.
+The log always carries full `DEBUG` detail, so there is nothing to switch on before you send it
+to someone. Three older options are gone and the plugin removes their lines from your file on
+the next start: `debug` (always on now), `no_update_check` (the check always runs) and
+`force_reload` (it made the game crash, see the 0.8.26 changelog).
 
 The file is only ever created, never rewritten, so your changes and any notes you add to it
 survive every update. Delete it and you get a fresh one with everything off.

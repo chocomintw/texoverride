@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.26 (2026-09-09)
+
+- Fixes the crash 0.8.25 caused on busy servers: `ERR_GEN_PAGE_1` at `GTA5_b3751.exe+13EC17E`,
+  a few minutes into a session. The cause was `force_reload`, added in 0.8.24 and widened in
+  0.8.25. Once claims started landing on the game's real slots, it began dropping clothing and
+  animation files out of memory while a ped was still using them, which is the one thing a plugin
+  must never do to the game. It had never done anything useful in any log before that either. It
+  is gone, the plugin never frees anything the game has loaded any more, and the line is removed
+  from your `_settings.txt` on the next start. The real-slot fix from 0.8.25 stays.
+- The log always carries full `DEBUG` detail now. The `debug` option is gone and its line is
+  removed from your settings file. Nobody has to be told to turn it on and send the log again.
+- Update messages always appear. The `no_update_check` option is gone. A new version always
+  produces a message, whether the plugin installed it on its own because `auto_update` is on or
+  is asking you first. Before this, with `auto_update = yes`, an update landed in silence, which
+  is how "I never turned updates on" reports start.
+- The 500 line cap on the list of overridable server files is gone. It only ever existed to be
+  lifted by `debug`.
+
 ## 0.8.25 (2026-09-08)
 
 - Your files were being registered into slots the game never reads. This is the big one, and it

@@ -43,7 +43,6 @@ extern long g_lateBinds;
 // collection map: root files shown / counted only. Incremented under g_cs by the hook thread,
 // read unlocked by the beat thread for the heartbeat, hence volatile: display only, and an
 // aligned long cannot tear on x86-64.
-extern long g_collListed;
 extern volatile long g_collOther;
 extern bool g_didRegister;
 extern bool g_b1;
@@ -69,9 +68,6 @@ extern GetRawStreamer_t g_getRawStreamerFn;
 extern RawGetEntry_t    g_rawGetEntryFn;
 extern bool g_watcherStarted;
 extern std::deque<LiveOp> g_opQ;
-extern std::vector<DropReq> g_dropQ;
-extern volatile LONG g_dropPending;
-extern long g_forcedReloads;
 extern volatile LONG g_opsPending;
 extern ULONGLONG g_journalClearAt;
 extern PeekMsg_t g_origPeek;
