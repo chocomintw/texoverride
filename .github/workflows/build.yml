@@ -18,6 +18,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The gate, the settings parser, the revalidation sweep and ctlPath all have plain
+      # assert-style checks in tools/. They only mean anything if they run on every push,
+      # so this gates the build: a red test never reaches a release.
+      - name: Run tests
+        shell: cmd
+        run: tools\run_tests.bat
+
       - name: Build
         shell: cmd
         run: build.bat
