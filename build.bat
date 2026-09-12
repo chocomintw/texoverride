@@ -23,9 +23,13 @@ call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
 rc /nologo /fo texoverride.res texoverride.rc || exit /b 1
 REM /MT so it does not need the VC runtime DLLs in FiveM's directory.
 REM /EHsc for std::string/std::vector. No /clr — a managed DLL is refused outright by asi-five.
-cl /nologo /std:c++17 /O2 /MT /EHsc /DNDEBUG /LD /I minhook\include /I src ^
+REM minhook is vendored C and warns at /W4 about its own style. Compiled on its own so the
+REM warnings the build prints are only ever ours.
+cl /nologo /c /W0 /O2 /MT /DNDEBUG /I minhook\include ^
+   minhook\src\buffer.c minhook\src\hook.c minhook\src\trampoline.c minhook\src\hde\hde64.c || exit /b 1
+cl /nologo /std:c++17 /W4 /O2 /MT /EHsc /DNDEBUG /LD /I minhook\include /I src ^
    dllmain.cpp src\core\*.cpp src\streaming\*.cpp src\features\*.cpp ^
-   minhook\src\buffer.c minhook\src\hook.c minhook\src\trampoline.c minhook\src\hde\hde64.c ^
+   buffer.obj hook.obj trampoline.obj hde64.obj ^
    texoverride.res /Fe:texoverride.asi /link /DLL user32.lib /Brepro || exit /b 1
 
 del /q *.obj *.res *.exp *.lib 2>nul

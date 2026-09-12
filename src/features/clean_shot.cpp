@@ -96,6 +96,7 @@ static bool overlayGate()
         g_hidden = hide;
         int n = cfxDetachOwned(g_shotEvent, g_owners, g_standIns, 2, hide);
         LOG_DEV(LogCategory::Core, "hide_overlay: %d handler(s) %s the event", n, hide ? "taken off" : "put back on");
+        (void)n;   // read only by LOG_DEV, which release builds compile away
 #ifdef TEXOVERRIDE_DEV
         if (hide) cfxDumpEvent(g_shotEvent, "after-detach");
 #endif

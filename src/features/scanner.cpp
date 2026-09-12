@@ -131,14 +131,14 @@ void scanFinish()
     // that costs somebody a whole evening before they think to doubt it.
     {
         static const char* kUnreachable[] = { "mp_fm_skin_", "mp_fm_faov_", "ng_hip_faov_", "mp_eye_colour" };
-        int n = 0;
+        int unreachable = 0;
         for (auto& ov : g_ovs) {
             if (strchr(ov.slot, 0x2F)) continue;            // root keys only
             for (const char* pre : kUnreachable)
-                if (_strnicmp(ov.slot, pre, strlen(pre)) == 0) { ++n; break; }
+                if (_strnicmp(ov.slot, pre, strlen(pre)) == 0) { ++unreachable; break; }
         }
-        if (n)
-            LOG_WARN(LogCategory::Scan, "  %d body skin / face overlay file(s) here (mp_fm_skin_*, mp_fm_faov_*, ng_hip_faov_*, mp_eye_colour). These CANNOT be replaced from tex_overrides: the slot claim works and the log will say your file loaded, but the ped is built from these earlier and keeps the stock look. Ship them in a FiveM mods folder package instead. Head models and head textures in a collection folder are unaffected.", n);
+        if (unreachable)
+            LOG_WARN(LogCategory::Scan, "  %d body skin / face overlay file(s) here (mp_fm_skin_*, mp_fm_faov_*, ng_hip_faov_*, mp_eye_colour). These CANNOT be replaced from tex_overrides: the slot claim works and the log will say your file loaded, but the ped is built from these earlier and keeps the stock look. Ship them in a FiveM mods folder package instead. Head models and head textures in a collection folder are unaffected.", unreachable);
     }
 
     costReport();
