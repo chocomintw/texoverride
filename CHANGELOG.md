@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.27 (2026-09-12)
+
+- The download now has a folder for the GTA World clothing packs. Nine of them, three per
+  character plus the prop ones, named the way the server names them. Before this you had to
+  read your log and make the folder yourself. The server dogs and cats have folders too:
+  `canine`, `caninepd`, `caninesd`, `caninefd`, `caninesp`, `blackcat` and `browncat`.
+  `COLLECTIONS.md` lists them all, and the readme in the folder says how to find the names
+  for any other server.
+- No code in the plugin changed. The only difference from 0.8.26 is the version number
+  stamped into the file, so there is nothing to gain from updating unless you want the new
+  folders. Everything else below is about the repository, not the plugin.
+- The tests run on every push now. Four of the five only existed on one machine, in a folder
+  git ignores, so nothing ever ran them. One of the five had been failing since 0.8.8: it
+  still expected a `.ydr` or `.yft` dropped straight into `tex_overrides` to be refused,
+  which the weapon and prop work deliberately changed. Nobody could see it, because nothing
+  ran it.
+- The build compiles at a higher warning level. It found two harmless things, both fixed.
+  The vendored copy of MinHook builds on its own now so its own warnings stay out of the way.
+
 ## 0.8.26 (2026-09-09)
 
 - Fixes the crash 0.8.25 caused on busy servers: `ERR_GEN_PAGE_1` at `GTA5_b3751.exe+13EC17E`,
