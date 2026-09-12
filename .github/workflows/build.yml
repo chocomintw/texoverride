@@ -12,11 +12,16 @@ permissions:
   id-token: write        # build provenance signing
   attestations: write
 
+# Action versions are the lowest that run on Node 24, which is what the runner now wants.
+# Deliberately not the newest majors: checkout v7 changes pull_request_target fork checkout
+# defaults, upload-artifact v7 moves to ESM and adds an archive mode, and
+# attest-build-provenance v4 is a thin wrapper over actions/attest. None of that buys
+# anything here. Re-check with: gh api repos/<action>/contents/action.yml?ref=<tag>
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The gate, the settings parser, the revalidation sweep and ctlPath all have plain
       # assert-style checks in tools/. They only mean anything if they run on every push,
@@ -44,7 +49,7 @@ jobs:
           Write-Host "reproducible: $first"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: texoverride.asi
           path: texoverride.asi
@@ -57,7 +62,7 @@ jobs:
         run: ./tools/make-zip.ps1
 
       - name: Upload zip artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: texoverride.zip
           path: texoverride.zip
@@ -67,7 +72,7 @@ jobs:
       # player can check: gh attestation verify texoverride.asi --repo <repo>
       - name: Attest build provenance
         if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v3
         with:
           subject-path: |
             texoverride.asi
