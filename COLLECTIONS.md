@@ -236,6 +236,33 @@ runs its dogs as `canine`, `caninepd`, `caninesd` and `caninefd`, and its cats a
 `browncat`. No prefix rule could ever have guessed those, and every one of them was refused before.
 Now they work: name the folder after the model, put the parts in, done.
 
+Servers add clothes of their own the same way, as extra collections beside the ones above. GTA
+World runs three per character, and they take files exactly like any other collection folder:
+
+- `mp_m_freemode_01_mp_m_gtawclothes1`
+- `mp_m_freemode_01_mp_m_gtawclothes2`
+- `mp_m_freemode_01_mp_m_gtawclothes3`
+- `mp_m_freemode_01_p_mp_m_gtawclothes1`
+- `mp_m_freemode_01_p_mp_m_gtawclothes2`
+- `mp_f_freemode_01_mp_f_gtawclothes1`
+- `mp_f_freemode_01_mp_f_gtawclothes2`
+- `mp_f_freemode_01_mp_f_gtawclothes3`
+- `mp_f_freemode_01_p_mp_f_gtawclothes1`
+
+Those names came out of a real log, not the game files, so a server can rename or add to them at
+any time. Read your own log to be sure: the `collection:` lines name every clothing pack the
+server you are on is running, with the folder to use written beside each one.
+
+The same server runs these animals:
+
+- `canine`
+- `caninepd`
+- `caninesd`
+- `caninefd`
+- `caninesp`
+- `blackcat`
+- `browncat`
+
 A vehicle texture, a prop drawable or a map file still cannot get in, whatever folder it sits in,
 because none of them are named like ped parts. That was the protection the folder list was really
 providing, and it is the part that stayed.

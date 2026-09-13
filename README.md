@@ -378,10 +378,10 @@ src/                    modular C++ source (hook, streaming, budget, tattoo plac
 dllmain.cpp             plugin entry point (DllMain)
 build.bat               MSVC build
 texoverride.rc          FX_ASI_BUILD stamp
-minhook/                vendored MinHook with the Freeze() patch
+minhook/                vendored MinHook, thread freezing removed
 COLLECTIONS.md          every valid collection folder name, characters and animals
 tools/make-zip.ps1      packs the release zip, folder list read from COLLECTIONS.md
-tools/gate_test.bat     runs the safety-gate cases against the real code in src/gate.h
+tools/run_tests.bat     builds and runs every test in tools/, used as the gate in CI
 docs/replacing-files.md       step by step for clothes, tattoos, animations, weapons, props, vehicles
 docs/reading-the-log.md       what every line in texoverride.log means
 docs/textures-and-budget.md   why textures go missing, and the memory ceiling

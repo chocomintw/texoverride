@@ -40,6 +40,23 @@ use the short one.
 
 COLLECTIONS.md on the project page lists which is which if you ever need to look one up.
 
+IF THE MOD IS FOR A SERVER
+Servers add clothes of their own, and those sit in their own folders. GTA World ships three of
+them per character, so a GTA World mod belongs in one of these:
+
+   mp_m_freemode_01_mp_m_gtawclothes1      and 2, and 3
+   mp_f_freemode_01_mp_f_gtawclothes1      and 2, and 3
+
+Hats and glasses from those packs go in the matching name with _p_ in the middle, such as
+mp_m_freemode_01_p_mp_m_gtawclothes1.
+
+Other servers use other names. Start the game once and open texoverride.log. The lines that
+begin with collection: name every clothing pack that server is running, and the folder to use
+for each one is written on the same line.
+
+The server dogs and cats have folders too: canine, caninepd, caninesd, caninefd, caninesp,
+blackcat, browncat.
+
 
 ===============================================================================
 TATTOOS, SKIN, FACE PAINT, BEARDS

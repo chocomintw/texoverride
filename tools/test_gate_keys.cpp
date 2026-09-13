@@ -1,5 +1,5 @@
 // Checks the safety gate against src/streaming/gate.h directly.
-#include "../src/streaming/gate.h"
+#include "streaming/gate.h"
 #include <string>
 #include <cstdio>
 
@@ -41,7 +41,6 @@ int main()
     // still refused: everything that is not a ped
     DENY("adder/adder.ytd");                 // vehicle collection
     DENY("prop_bench_01a.ydd");              // prop model, no a_c_ name
-    DENY("onx_sandy_01.ydr");                // map drawable
     DENY("s_m_y_cop_01/head_000_r.ydd");     // story ped collection
     DENY("player_zero/uppr_000_r.ydd");
     DENY("cs_lamardavis/head_000_r.ydd");    // 147 cs_ collections in the game, all refused
@@ -56,7 +55,10 @@ int main()
     // any other .ymt name is fair game, which is what a clothing pack ships
     ALLOW("mp_m_freemode_01_mypack.ymt"); ALLOW("mp_creaturemetadata_mypack.ymt");
     ALLOW("shepherd.ymt"); ALLOW("gameconfig.ymt");
-    DENY("vehicles.yft");
+    // Root .ydr and .yft take ANY name since 0.8.8 (weapons) and the prop pack widening
+    // that followed it: a bare name IS the slot, so there is nothing to cross-wire.
+    ALLOW("onx_sandy_01.ydr"); ALLOW("vehicles.yft");
+    ALLOW("w_pi_pistol.ydr"); ALLOW("prop_cs_cardbox_01.ydr");
     DENY("head_000_r.ydd");                  // loose drawable with no collection
     DENY("mp_m_freemode_01/a_c_pug.yft");    // .yft has no meaning inside a collection
     DENY("a_c_shepherd/a_c_shepherd.ymt");

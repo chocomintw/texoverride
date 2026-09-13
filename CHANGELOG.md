@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.8.28 (2026-09-13)
+
+- The plugin no longer looks up the Windows functions for listing and freezing threads. The
+  copy of MinHook in here used to suspend every other thread while it wrote its patch, which
+  never worked under FiveM in the first place, since FiveM blocks the call that lists them.
+  It was not needed either: the patch goes in before the game has started running, so there
+  is no thread to freeze. Eight function lookups are gone from the file with it, and thread
+  listing plus thread freezing is one of the things antivirus software watches for hardest.
+  Nothing about how the plugin behaves changed. Measured on VirusTotal the same day: 0.8.27
+  was flagged by four engines out of 71 and this build by one. Bkav, Cynet and Trapmine no
+  longer flag it. Defender still does, as `Trojan:Win32/Wacatac.C!ml`, which is reported to
+  Microsoft as a false positive. Part of that is simply that this file is new, so treat the
+  three that cleared as encouraging rather than proven.
+- Why bother: 0.8.27 and 0.8.26 hold the same code, and Defender flagged one and not the
+  other. `docs/antivirus.md` now has the numbers from both, explains why a brand new release
+  scores worse than an old one even when nothing in it changed, and lists every Windows
+  function the plugin uses next to what a scanner reads it as.
+- New test covering the patch going in and coming back out, since that code was rewritten.
+  It hooks a function inside the test itself, so it runs anywhere, no game needed.
+
+## 0.8.27 (2026-09-12)
+
+- The download now has a folder for the GTA World clothing packs. Nine of them, three per
+  character plus the prop ones, named the way the server names them. Before this you had to
+  read your log and make the folder yourself. The server dogs and cats have folders too:
+  `canine`, `caninepd`, `caninesd`, `caninefd`, `caninesp`, `blackcat` and `browncat`.
+  `COLLECTIONS.md` lists them all, and the readme in the folder says how to find the names
+  for any other server.
+- No code in the plugin changed. The only difference from 0.8.26 is the version number
+  stamped into the file, so there is nothing to gain from updating unless you want the new
+  folders. Everything else below is about the repository, not the plugin.
+- The tests run on every push now. Four of the five only existed on one machine, in a folder
+  git ignores, so nothing ever ran them. One of the five had been failing since 0.8.8: it
+  still expected a `.ydr` or `.yft` dropped straight into `tex_overrides` to be refused,
+  which the weapon and prop work deliberately changed. Nobody could see it, because nothing
+  ran it.
+- The build compiles at a higher warning level. It found two harmless things, both fixed.
+  The vendored copy of MinHook builds on its own now so its own warnings stay out of the way.
+
 ## 0.8.26 (2026-09-09)
 
 - Fixes the crash 0.8.25 caused on busy servers: `ERR_GEN_PAGE_1` at `GTA5_b3751.exe+13EC17E`,
