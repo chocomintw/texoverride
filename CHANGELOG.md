@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.28 (2026-09-13)
+
+- The plugin no longer looks up the Windows functions for listing and freezing threads. The
+  copy of MinHook in here used to suspend every other thread while it wrote its patch, which
+  never worked under FiveM in the first place, since FiveM blocks the call that lists them.
+  It was not needed either: the patch goes in before the game has started running, so there
+  is no thread to freeze. Eight function lookups are gone from the file with it, and thread
+  listing plus thread freezing is one of the things antivirus software watches for hardest.
+  Nothing about how the plugin behaves changed. Measured on VirusTotal the same day: 0.8.27
+  was flagged by four engines out of 71 and this build by one. Bkav, Cynet and Trapmine no
+  longer flag it. Defender still does, as `Trojan:Win32/Wacatac.C!ml`, which is reported to
+  Microsoft as a false positive. Part of that is simply that this file is new, so treat the
+  three that cleared as encouraging rather than proven.
+- Why bother: 0.8.27 and 0.8.26 hold the same code, and Defender flagged one and not the
+  other. `docs/antivirus.md` now has the numbers from both, explains why a brand new release
+  scores worse than an old one even when nothing in it changed, and lists every Windows
+  function the plugin uses next to what a scanner reads it as.
+- New test covering the patch going in and coming back out, since that code was rewritten.
+  It hooks a function inside the test itself, so it runs anywhere, no game needed.
+
 ## 0.8.27 (2026-09-12)
 
 - The download now has a folder for the GTA World clothing packs. Nine of them, three per

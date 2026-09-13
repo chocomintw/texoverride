@@ -26,8 +26,28 @@
  *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ *  LOCAL CHANGE (texoverride). Upstream MinHook suspends every other thread while it writes
+ *  the patch, and rewrites the instruction pointer of any thread sitting inside the bytes it
+ *  replaces. It reaches for CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD), OpenThread,
+ *  SuspendThread, GetThreadContext, SetThreadContext and ResumeThread to do it.
+ *
+ *  None of that ran here even before it was removed. FiveM blocks the thread snapshot, so the
+ *  enumeration always failed and the freeze was already a no-op. It is not needed either:
+ *  Setup() patches from DllMain during LauncherInterface::PostLoadGame, before the game entry
+ *  point has run, so no thread is executing the code being patched.
+ *
+ *  Deleted rather than left dead because thread enumeration plus SuspendThread plus
+ *  SetThreadContext is one of the loudest code injection signatures an antivirus looks for.
+ *  Importing six functions in order never to call them costs a detection and buys nothing.
+ *
+ *  Gone: FindOldIP, FindNewIP, ProcessThreadIPs, EnumerateThreads, Freeze, Unfreeze,
+ *  FROZEN_THREADS, THREAD_ACCESS, INITIAL_THREAD_CAPACITY, the ACTION_* defines, tlhelp32.h.
+ *  HOOK_ENTRY keeps nIP/oldIPs/newIPs: trampoline.c fills them in as part of its own struct,
+ *  they are just never read back now.
+ */
+
 #include <windows.h>
-#include <tlhelp32.h>
 #include <limits.h>
 
 #include "../include/MinHook.h"
@@ -41,21 +61,9 @@
 // Initial capacity of the HOOK_ENTRY buffer.
 #define INITIAL_HOOK_CAPACITY   32
 
-// Initial capacity of the thread IDs buffer.
-#define INITIAL_THREAD_CAPACITY 128
-
 // Special hook position values.
 #define INVALID_HOOK_POS UINT_MAX
 #define ALL_HOOKS_POS    UINT_MAX
-
-// Freeze() action argument defines.
-#define ACTION_DISABLE      0
-#define ACTION_ENABLE       1
-#define ACTION_APPLY_QUEUED 2
-
-// Thread access rights for suspending/resuming threads.
-#define THREAD_ACCESS \
-    (THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION | THREAD_SET_CONTEXT)
 
 // Hook information.
 typedef struct _HOOK_ENTRY
@@ -73,14 +81,6 @@ typedef struct _HOOK_ENTRY
     UINT8  oldIPs[8];           // Instruction boundaries of the target function.
     UINT8  newIPs[8];           // Instruction boundaries of the trampoline function.
 } HOOK_ENTRY, *PHOOK_ENTRY;
-
-// Suspended threads for Freeze()/Unfreeze().
-typedef struct _FROZEN_THREADS
-{
-    LPDWORD pItems;         // Data heap
-    UINT    capacity;       // Size of allocated data heap, items
-    UINT    size;           // Actual number of data items
-} FROZEN_THREADS, *PFROZEN_THREADS;
 
 //-------------------------------------------------------------------------
 // Global Variables:
@@ -160,243 +160,6 @@ static VOID DeleteHookEntry(UINT pos)
 }
 
 //-------------------------------------------------------------------------
-static DWORD_PTR FindOldIP(PHOOK_ENTRY pHook, DWORD_PTR ip)
-{
-    UINT i;
-
-    if (pHook->patchAbove && ip == ((DWORD_PTR)pHook->pTarget - sizeof(JMP_REL)))
-        return (DWORD_PTR)pHook->pTarget;
-
-    for (i = 0; i < pHook->nIP; ++i)
-    {
-        if (ip == ((DWORD_PTR)pHook->pTrampoline + pHook->newIPs[i]))
-            return (DWORD_PTR)pHook->pTarget + pHook->oldIPs[i];
-    }
-
-#if defined(_M_X64) || defined(__x86_64__)
-    // Check relay function.
-    if (ip == (DWORD_PTR)pHook->pDetour)
-        return (DWORD_PTR)pHook->pTarget;
-#endif
-
-    return 0;
-}
-
-//-------------------------------------------------------------------------
-static DWORD_PTR FindNewIP(PHOOK_ENTRY pHook, DWORD_PTR ip)
-{
-    UINT i;
-    for (i = 0; i < pHook->nIP; ++i)
-    {
-        if (ip == ((DWORD_PTR)pHook->pTarget + pHook->oldIPs[i]))
-            return (DWORD_PTR)pHook->pTrampoline + pHook->newIPs[i];
-    }
-
-    return 0;
-}
-
-//-------------------------------------------------------------------------
-static VOID ProcessThreadIPs(HANDLE hThread, UINT pos, UINT action)
-{
-    // If the thread suspended in the overwritten area,
-    // move IP to the proper address.
-
-    CONTEXT c;
-#if defined(_M_X64) || defined(__x86_64__)
-    DWORD64 *pIP = &c.Rip;
-#else
-    DWORD   *pIP = &c.Eip;
-#endif
-    UINT count;
-
-    c.ContextFlags = CONTEXT_CONTROL;
-    if (!GetThreadContext(hThread, &c))
-        return;
-
-    if (pos == ALL_HOOKS_POS)
-    {
-        pos = 0;
-        count = g_hooks.size;
-    }
-    else
-    {
-        count = pos + 1;
-    }
-
-    for (; pos < count; ++pos)
-    {
-        PHOOK_ENTRY pHook = &g_hooks.pItems[pos];
-        BOOL        enable;
-        DWORD_PTR   ip;
-
-        switch (action)
-        {
-        case ACTION_DISABLE:
-            enable = FALSE;
-            break;
-
-        case ACTION_ENABLE:
-            enable = TRUE;
-            break;
-
-        default: // ACTION_APPLY_QUEUED
-            enable = pHook->queueEnable;
-            break;
-        }
-        if (pHook->isEnabled == enable)
-            continue;
-
-        if (enable)
-            ip = FindNewIP(pHook, *pIP);
-        else
-            ip = FindOldIP(pHook, *pIP);
-
-        if (ip != 0)
-        {
-            *pIP = ip;
-            SetThreadContext(hThread, &c);
-        }
-    }
-}
-
-//-------------------------------------------------------------------------
-static BOOL EnumerateThreads(PFROZEN_THREADS pThreads)
-{
-    BOOL succeeded = FALSE;
-
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (hSnapshot != INVALID_HANDLE_VALUE)
-    {
-        THREADENTRY32 te;
-        te.dwSize = sizeof(THREADENTRY32);
-        if (Thread32First(hSnapshot, &te))
-        {
-            succeeded = TRUE;
-            do
-            {
-                if (te.dwSize >= (FIELD_OFFSET(THREADENTRY32, th32OwnerProcessID) + sizeof(DWORD))
-                    && te.th32OwnerProcessID == GetCurrentProcessId()
-                    && te.th32ThreadID != GetCurrentThreadId())
-                {
-                    if (pThreads->pItems == NULL)
-                    {
-                        pThreads->capacity = INITIAL_THREAD_CAPACITY;
-                        pThreads->pItems
-                            = (LPDWORD)HeapAlloc(g_hHeap, 0, pThreads->capacity * sizeof(DWORD));
-                        if (pThreads->pItems == NULL)
-                        {
-                            succeeded = FALSE;
-                            break;
-                        }
-                    }
-                    else if (pThreads->size >= pThreads->capacity)
-                    {
-                        LPDWORD p;
-                        pThreads->capacity *= 2;
-                        p = (LPDWORD)HeapReAlloc(
-                            g_hHeap, 0, pThreads->pItems, pThreads->capacity * sizeof(DWORD));
-                        if (p == NULL)
-                        {
-                            succeeded = FALSE;
-                            break;
-                        }
-
-                        pThreads->pItems = p;
-                    }
-                    pThreads->pItems[pThreads->size++] = te.th32ThreadID;
-                }
-
-                te.dwSize = sizeof(THREADENTRY32);
-            } while (Thread32Next(hSnapshot, &te));
-
-            if (succeeded && GetLastError() != ERROR_NO_MORE_FILES)
-                succeeded = FALSE;
-
-            if (!succeeded && pThreads->pItems != NULL)
-            {
-                HeapFree(g_hHeap, 0, pThreads->pItems);
-                pThreads->pItems = NULL;
-            }
-        }
-        CloseHandle(hSnapshot);
-    }
-
-    return succeeded;
-}
-
-//-------------------------------------------------------------------------
-static MH_STATUS Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
-{
-    MH_STATUS status = MH_OK;
-
-    pThreads->pItems   = NULL;
-    pThreads->capacity = 0;
-    pThreads->size     = 0;
-    if (!EnumerateThreads(pThreads))
-    {
-        // PATCHED: FiveM blocks CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD), so MinHook can't
-        // enumerate threads to suspend them. Rather than fail, proceed WITHOUT freezing — the
-        // patch is a few bytes written once at startup; the odds of a thread's IP sitting inside
-        // exactly those bytes at that instant are negligible. pItems stays NULL -> nothing is
-        // suspended, and ProcessThreadIPs is skipped. Original behaviour: status = MH_ERROR_MEMORY_ALLOC.
-        pThreads->pItems = NULL;
-        pThreads->size   = 0;
-        status = MH_OK;
-    }
-    else if (pThreads->pItems != NULL)
-    {
-        UINT i;
-        for (i = 0; i < pThreads->size; ++i)
-        {
-            HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
-            BOOL suspended = FALSE;
-            if (hThread != NULL)
-            {
-                DWORD result = SuspendThread(hThread);
-                if (result != 0xFFFFFFFF)
-                {
-                    suspended = TRUE;
-                    ProcessThreadIPs(hThread, pos, action);
-                }
-                CloseHandle(hThread);
-            }
-
-            if (!suspended)
-            {
-                // Mark thread as not suspended, so it's not resumed later on.
-                pThreads->pItems[i] = 0;
-            }
-        }
-    }
-
-    return status;
-}
-
-//-------------------------------------------------------------------------
-static VOID Unfreeze(PFROZEN_THREADS pThreads)
-{
-    if (pThreads->pItems != NULL)
-    {
-        UINT i;
-        for (i = 0; i < pThreads->size; ++i)
-        {
-            DWORD threadId = pThreads->pItems[i];
-            if (threadId != 0)
-            {
-                HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, threadId);
-                if (hThread != NULL)
-                {
-                    ResumeThread(hThread);
-                    CloseHandle(hThread);
-                }
-            }
-        }
-
-        HeapFree(g_hHeap, 0, pThreads->pItems);
-    }
-}
-
-//-------------------------------------------------------------------------
 static MH_STATUS EnableHookLL(UINT pos, BOOL enable)
 {
     PHOOK_ENTRY pHook = &g_hooks.pItems[pos];
@@ -462,21 +225,14 @@ static MH_STATUS EnableAllHooksLL(BOOL enable)
 
     if (first != INVALID_HOOK_POS)
     {
-        FROZEN_THREADS threads;
-        status = Freeze(&threads, ALL_HOOKS_POS, enable ? ACTION_ENABLE : ACTION_DISABLE);
-        if (status == MH_OK)
+        for (i = first; i < g_hooks.size; ++i)
         {
-            for (i = first; i < g_hooks.size; ++i)
+            if (g_hooks.pItems[i].isEnabled != enable)
             {
-                if (g_hooks.pItems[i].isEnabled != enable)
-                {
-                    status = EnableHookLL(i, enable);
-                    if (status != MH_OK)
-                        break;
-                }
+                status = EnableHookLL(i, enable);
+                if (status != MH_OK)
+                    break;
             }
-
-            Unfreeze(&threads);
         }
     }
 
@@ -693,16 +449,7 @@ MH_STATUS WINAPI MH_RemoveHook(LPVOID pTarget)
         if (pos != INVALID_HOOK_POS)
         {
             if (g_hooks.pItems[pos].isEnabled)
-            {
-                FROZEN_THREADS threads;
-                status = Freeze(&threads, pos, ACTION_DISABLE);
-                if (status == MH_OK)
-                {
-                    status = EnableHookLL(pos, FALSE);
-
-                    Unfreeze(&threads);
-                }
-            }
+                status = EnableHookLL(pos, FALSE);
 
             if (status == MH_OK)
             {
@@ -745,14 +492,7 @@ static MH_STATUS EnableHook(LPVOID pTarget, BOOL enable)
             {
                 if (g_hooks.pItems[pos].isEnabled != enable)
                 {
-                    FROZEN_THREADS threads;
-                    status = Freeze(&threads, pos, ACTION_ENABLE);
-                    if (status == MH_OK)
-                    {
-                        status = EnableHookLL(pos, enable);
-
-                        Unfreeze(&threads);
-                    }
+                    status = EnableHookLL(pos, enable);
                 }
                 else
                 {
@@ -858,22 +598,15 @@ MH_STATUS WINAPI MH_ApplyQueued(VOID)
 
         if (first != INVALID_HOOK_POS)
         {
-            FROZEN_THREADS threads;
-            status = Freeze(&threads, ALL_HOOKS_POS, ACTION_APPLY_QUEUED);
-            if (status == MH_OK)
+            for (i = first; i < g_hooks.size; ++i)
             {
-                for (i = first; i < g_hooks.size; ++i)
+                PHOOK_ENTRY pHook = &g_hooks.pItems[i];
+                if (pHook->isEnabled != pHook->queueEnable)
                 {
-                    PHOOK_ENTRY pHook = &g_hooks.pItems[i];
-                    if (pHook->isEnabled != pHook->queueEnable)
-                    {
-                        status = EnableHookLL(i, pHook->queueEnable);
-                        if (status != MH_OK)
-                            break;
-                    }
+                    status = EnableHookLL(i, pHook->queueEnable);
+                    if (status != MH_OK)
+                        break;
                 }
-
-                Unfreeze(&threads);
             }
         }
     }

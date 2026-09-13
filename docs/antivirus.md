@@ -42,6 +42,68 @@ What you can do:
 - Add an exclusion for your FiveM `plugins` folder, if you are comfortable doing that and you
   trust where you got the file.
 
+## A new release can score worse than the old one, with the same code in it
+
+Numbers from 2026-09-13, both files scanned on VirusTotal seventeen minutes apart:
+
+| | 0.8.27 | 0.8.26 |
+|---|---|---|
+| total | 4 of 71 engines | 2 of 71 engines |
+| Microsoft Defender | `Trojan:Win32/Wacatac.C!ml` | did not flag it |
+| Bkav | `W32.Malware.C8C9EC41` | `W32.Malware.BD7E04A6` |
+| Cynet | `Malicious (score: 100)` | `Malicious (score: 100)` |
+| Trapmine | `suspicious.low.ml.score` | did not flag it |
+
+Those two files are the same plugin. Set the version number in 0.8.27's source back to 0.8.26,
+build it, and you get the file 0.8.26 shipped, hash for hash. The only difference between them is
+six characters of version text, so nothing in the file explains why one was called a trojan and
+the other was not.
+
+The detection names give it away. Anything ending in `!ml` or `.ml.score`, and any bare score, is
+a machine learning guess rather than a match on known code. Part of that guess is how many
+machines have already seen the exact file, and a release that came out yesterday has been seen by
+almost nobody. Every new version starts that count at zero, which is why the build you have been
+running looks clean while the one that just auto-updated does not.
+
+So an older release will usually score better than a newer one, and that is about the age of the
+file rather than what is in it. It also means comparing two releases on VirusTotal tells you
+nothing about which one is safer, unless the code between them changed.
+
+## What the scanners object to
+
+You can check the whole list yourself with `dumpbin /imports texoverride.asi`. These are the
+Windows functions the plugin calls, and what an antivirus tends to read them as:
+
+| Windows functions used | what that looks like |
+|---|---|
+| `VirtualAlloc`, `VirtualProtect`, `FlushInstructionCache` | allocating executable memory and rewriting code in a running program |
+| ten `WinHttp*` calls, `BCrypt*` hashing, `ShellExecuteA` | download a file, hash it, run it |
+| `GetAsyncKeyState`, `GetForegroundWindow` | reading the keyboard and checking which window is in front |
+| `LoadLibraryA`, `GetProcAddress`, `GetModuleHandle*` | looking up Windows functions at runtime instead of declaring them |
+
+Every row has a plain reason behind it. The first is the hook, which is the entire point of the
+plugin. The second is the update check, which fetches the release list over HTTPS, checks the
+SHA-256 of what it downloaded, and asks Windows to run the new file. The third is the screenshot
+key for `hide_overlay`, plus the test that FiveM is the window in front so that keys are ignored
+while you are in another program. The fourth is how FiveM's own exports get found, because a
+normal import on a FiveM DLL would turn a renamed export into a plugin that refuses to load at
+all.
+
+Individually none of that is unusual. Together it is close to the shape of a program that
+downloads something and watches the keyboard, and a scanner trained on that shape scores the
+combination.
+
+Two things that could be on that list are not:
+
+- The plugin never calls game natives, so it does not touch the script engine.
+- It does not enumerate or suspend threads. MinHook normally freezes every other thread while it
+  writes the patch, through `CreateToolhelp32Snapshot`, `SuspendThread` and `SetThreadContext`,
+  which is one of the loudest code injection signatures a scanner looks for. That code never ran
+  under FiveM, which blocks the thread snapshot, and it was never needed: the patch happens before
+  the game's entry point, so no thread is running the code being changed. Version 0.8.28 deleted
+  it from `minhook/src/hook.c` instead of leaving it unused, so those six functions are not in the
+  file at all.
+
 **If FiveM shows "Couldn't load texoverride.asi" and there is no `texoverride.log` next to the
 file**, something refused the file before any of the plugin's own code ran. Two things have
 caused that so far: Smart App Control, and McAfee. Both block unsigned files silently, neither

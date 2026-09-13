@@ -45,8 +45,8 @@ The hook is installed without suspending any threads, and the timing is what mak
 FiveM loads `.asi` plugins in `LauncherInterface::PostLoadGame`, before the game's entry point has
 ever run, so no thread can be executing game code during the patch. FiveM applies its own startup
 patches in the same window for the same reason. MinHook's usual thread-freeze step cannot work
-under FiveM anyway, since `CreateToolhelp32Snapshot` is blocked; the vendored copy is patched to
-skip it, which is commented in `minhook/src/hook.c`.
+under FiveM anyway, since `CreateToolhelp32Snapshot` is blocked. The vendored copy has that code
+removed rather than skipped, and the comment at the top of `minhook/src/hook.c` explains why.
 
 The path handed to the game is a plain absolute path, which FiveM's VFS opens without complaint.
 The game reads the whole resource from your file (header, page flags, data), so there is no size

@@ -18,3 +18,4 @@ CLAUDE.md
 # probe files the skin/overlay investigation drops in the repo root
 dds_*.dds
 /ped_collections.tsv
+.env
