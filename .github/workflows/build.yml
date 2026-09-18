@@ -26,6 +26,70 @@ jobs:
       # The gate, the settings parser, the revalidation sweep and ctlPath all have plain
       # assert-style checks in tools/. They only mean anything if they run on every push,
       # so this gates the build: a red test never reaches a release.
+      # Proves the vendored MinHook is the upstream commit minhook/UPSTREAM.md names, with
+      # hook.c as the only local change. That is what a git submodule would have bought, and it
+      # costs nothing at build time: continue-on-error means upstream being unreachable can never
+      # block a release, while a real mismatch still shows up loudly in the log.
+      - name: Verify vendored MinHook against upstream
+        continue-on-error: true
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          # GitHub runs this with bash -e -o pipefail. diff exits 1 whenever files differ, which
+          # here is the expected answer for hook.c, so -e would kill the script mid-way. Turn it
+          # off and handle the one failure that actually matters, the clone, explicitly.
+          set +e
+          pin=$(grep -oE '[0-9a-f]{40}' minhook/UPSTREAM.md | head -1)
+          if [ -z "$pin" ]; then
+            echo "no 40-character commit hash in minhook/UPSTREAM.md"
+            exit 1
+          fi
+          echo "UPSTREAM.md pins $pin"
+          if ! git clone -q https://github.com/TsudaKageyu/minhook.git /tmp/mh; then
+            echo "  upstream unreachable, comparison skipped"
+            exit 0
+          fi
+          if ! git -C /tmp/mh -c advice.detachedHead=false checkout -q "$pin"; then
+            echo "  pinned commit is not in upstream history"
+            exit 1
+          fi
+          bad=0
+          for f in include/MinHook.h src/buffer.c src/buffer.h src/trampoline.c src/trampoline.h src/hde/hde64.c src/hde/hde64.h src/hde/table64.h src/hde/pstdint.h; do
+            if diff -q --strip-trailing-cr "/tmp/mh/$f" "minhook/$f" > /dev/null; then
+              echo "  ok        $f"
+            else
+              echo "  MISMATCH  $f"
+              bad=1
+            fi
+          done
+          # hook.c is ours: the thread-freeze removal. It must differ, and only there.
+          if diff -q --strip-trailing-cr /tmp/mh/src/hook.c minhook/src/hook.c > /dev/null; then
+            echo "  UNEXPECTED src/hook.c matches upstream, the freeze removal is gone"
+            bad=1
+          else
+            n=$(diff --strip-trailing-cr /tmp/mh/src/hook.c minhook/src/hook.c | grep -c '^[<>]')
+            echo "  ok        src/hook.c differs as expected ($n changed lines)"
+          fi
+          # Does upstream have newer work on the files we vendor? The check above only proves this
+          # copy matches the pin, which says nothing about upstream having moved on. Never fails
+          # the build: a newer upstream is information, not a problem.
+          git -C /tmp/mh -c advice.detachedHead=false checkout -q master
+          ahead=$(git -C /tmp/mh rev-list --count "$pin"..master -- include src ':!src/hook.c')
+          if [ "$ahead" = "0" ]; then
+            echo "  upstream has nothing newer on the vendored files"
+          else
+            echo "  upstream has $ahead newer commit(s) touching the vendored files:"
+            git -C /tmp/mh log --oneline --no-decorate "$pin"..master -- include src ':!src/hook.c' | sed 's/^/    /'
+            echo "  to take them: see the Updating it section of minhook/UPSTREAM.md"
+          fi
+          hookahead=$(git -C /tmp/mh rev-list --count "$pin"..master -- src/hook.c)
+          if [ "$hookahead" != "0" ]; then
+            echo "  and $hookahead commit(s) touching hook.c, which is the file we fork:"
+            git -C /tmp/mh log --oneline --no-decorate "$pin"..master -- src/hook.c | sed 's/^/    /'
+            echo "  re-applying the freeze removal on top of those is a manual job"
+          fi
+          exit $bad
+
       - name: Run tests
         shell: cmd
         run: tools\run_tests.bat
